@@ -9,7 +9,7 @@ editor_options:
 
 
 ```{r}
-#This file and code below is meant to explore the new AOI (Ohio River Basin) I will be working with and the data within it. What I want to address are how many lakes are there in this basin, how many flowlines are covered within the RiverSF dataset, how many samples are included in AquaSat, etc.  
+#This file and code below is meant to explore the new AOI (Ohio River Basin) I will be working with and the data within it. What I want to address are how many lakes are there in this basin, how many flowlines are covered within the RiverSR dataset, how many samples are included in AquaSat, etc.  
 ```
 
 
@@ -129,6 +129,7 @@ aquasat <- aquasat %>%
 
 aquasat.aoi <- data.frame()
 
+#this takes awhile
 for (i in huc8) {
   roi <- huc8_watersheds %>%
     filter(huc8 == i)
