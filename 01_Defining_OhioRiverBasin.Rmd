@@ -5,14 +5,22 @@ date: "2022-10-13"
 editor_options: 
   chunk_output_type: console
 ---
-```{r}
-library(tidyverse)
-library(nhdplusTools)
 
+
+
+```{r}
+#This file and code below is meant to explore the new AOI (Ohio River Basin) I will be working with and the data within it. What I want to address are how many lakes are there in this basin, how many flowlines are covered within the RiverSF dataset, how many samples are included in AquaSat, etc.  
 ```
 
 
-What is the Ohio River Basin? What HUC IDs are included in the Ohio River Basin? How many lakes are there within this basin? Are there sub basins? What are those? 
+```{r}
+library(tidyverse)
+library(nhdplusTools)
+library(sf)
+```
+
+
+#What is the Ohio River Basin? What HUC IDs are included in the Ohio River Basin? How many lakes are there within this basin? Are there sub basins? What are those? 
 ```{r}
 
 #The Ohio River is listed with a 2 digit HUC of 05, and has 14 subbasins -- HUC4s (0501 - 0514) -- each with a number of HUC8s:(these were pulled from https://water.usgs.gov/GIS/huc_name.html#Region05)
@@ -38,7 +46,7 @@ ggplot(data = huc8_watersheds)+
 
 ```
 
-Pull out nhd waterbodies within the roi of the Ohio River Basin (huc8watersheds)
+#Pull out nhd waterbodies within the roi of the Ohio River Basin (huc8_watersheds)
 ```{r}
 
 huc8_watersheds$huc8 <- as.character(huc8_watersheds$huc8)
@@ -72,4 +80,87 @@ ggplot(data = OhioRiver_waterbodies)+
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 ```
 
+#How about rivers that are included in RiverSR? NHD Flowlines? How big do they have to be to be included in RiverSR?
+```{r}
+?get_nhdplushr()
+
+OhioRiver_flowlines <- data.frame()
+
+for (i in huc8) {
+  roi <- huc8_watersheds %>%
+    filter(huc8 == i)
+    appending <- get_nhdplus(AOI = roi, realization = "flowline")
+  OhioRiver_flowlines = rbind(OhioRiver_flowlines, appending)
+
+}
+
+#Rivers in RiverSR have to be greater than (or equal to?) 60 m wide
+
+#ATM I'm not sure how to find river width ?
+
+#I guess I could load in RiverSR,  join nhd_flowlines to RiverSR to filter for all the rivers in RiverSR? 
+
+comids <- read.csv("C:/Users/samsi/Desktop/COMID_ID.csv") #taken from RiverSF repository
+
+OhioRiver_flowlines_60m <- OhioRiver_flowlines %>%
+  filter(comid %in% comids$COMID)
+
+ggplot()+
+  geom_sf(data = huc8_watersheds, fill = NA, color = alpha("black", 0.2)) +
+  geom_sf(data = OhioRiver_waterbodies, colour = 'black') +
+  geom_sf(data = OhioRiver_flowlines_60m, colour = '#2166ac', size = 1.5) +
+  labs(title = 'Lakes and Flowlines (> 60 m wide) included within the Ohio River Basin') +
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+```
+
+#Pull out AquaSat data over this aoi
+```{r}
+aquasat <- read.csv("C:/Users/samsi/Desktop/sr_wq_rs_join.csv")
+
+aquasat <- st_as_sf(aquasat, coords = c('long', 'lat'), crs = 4326, remove = FALSE) %>%
+   st_transform(st_crs(huc8_watersheds))
+
+aquasat <- aquasat %>%
+  drop_na(chl_a)
+
+#Ok, I'm going to want all of the aquasat data taken within my aoi
+
+aquasat.aoi <- data.frame()
+
+for (i in huc8) {
+  roi <- huc8_watersheds %>%
+    filter(huc8 == i)
+    appending <- st_join(roi, aquasat, join = st_intersects)
+  aquasat.aoi = rbind(aquasat.aoi, appending)
+
+}
+
+#1866 obs between rivers and lakes in AquaSat in the Ohio River Basin
+
+aquasat.aoi <- aquasat.aoi %>%
+  st_drop_geometry()
+
+#some 40 odd na's in here were screwing things up, don't know where those came from? might need to check i non that 
+aquasat.aoi <- aquasat.aoi %>% 
+  drop_na(c('long','lat'))
+
+aquasat.aoi <- st_as_sf(aquasat.aoi, coords = c('long', 'lat'), crs = 4326, remove = FALSE)
+
+ggplot()+
+  geom_sf(data = huc8_watersheds, fill = NA, color = alpha("black", 0.2)) +
+  geom_sf(data = OhioRiver_waterbodies, colour = 'black') +
+  geom_sf(data = OhioRiver_flowlines_60m, colour = '#2166ac', size = 1) +
+  geom_sf(data = aquasat.aoi, colour = '#ca0020', size = 2) +
+  labs(title = 'Lakes, Flowlines (> 60 m wide), and AquaSat obs included within the Ohio River Basin') +
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+#how many unique sites in the aquasat aoi ? 
+
+no.sites <- unique(aquasat.aoi$SiteID)
+
+#536 sites over > 1800 obs , seems about right
+```
 
