@@ -1,0 +1,75 @@
+---
+title: "01_Defining_OhioRiverBasin"
+output: html_document
+date: "2022-10-13"
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(tidyverse)
+library(nhdplusTools)
+
+```
+
+
+What is the Ohio River Basin? What HUC IDs are included in the Ohio River Basin? How many lakes are there within this basin? Are there sub basins? What are those? 
+```{r}
+
+#The Ohio River is listed with a 2 digit HUC of 05, and has 14 subbasins -- HUC4s (0501 - 0514) -- each with a number of HUC8s:(these were pulled from https://water.usgs.gov/GIS/huc_name.html#Region05)
+
+huc8 <- c('05010001', '05010002', '05010003', '05010004', '05010005', '05010006', '05010007', '05010008', '05010009', '05020001', '05020002', '05020003', '05020004', '05020005', '05020006', '05030101', '05030102', '05030103', '05030104', '05030105', '05030106', '05030201', '05030202', '05030203', '05030204', '05040001', '05040002', '05040003', '05040004', '05040005', '05040006', '05050001', '05050002', '05050003', '05050004', '05050005', '05050006', '05050007', '05050008', '05050009', '05060001', '05060002', '05060003', '05070101', '05070102', '05070201', '05070202' ,'05070203', '05070204', '05080001', '05080002', '05080003', '05090101', '05090102', '05090103', '05090104', '05090201', '05090202', '05090203', '05100101', '05100102', '05100201', '05100202', '05100203', '05100204', '05100205', '05110001', '05110002', '05110003', '05110004', '05110005', '05110006', '05120101', '05120102', '05120103', '05120104', '05120105', '05120106', '05120107', '05120108', '05120109', '05120110', '05120111', '05120112', '05120113', '05120114', '05120115', '05120201', '05120202', '05120203', '05120204', '05120205', '05120206', '05120207', '05120208', '05120209', '05130101', '05130102', '05130103', '05130104', '05130105', '05130106', '05130107', '05130108', '05130201', '05130202', '05130203', '05130204', '05130205','05130206 ', '05140101', '05140102', '05140103', '05140104', '05140201', '05140202', '05140203', '05140204', '05140205', '05140206') 
+
+#Pull out huc8 watersheds from nhd
+
+huc8_watersheds <- data.frame()
+
+for (i in huc8) {
+  appending <- get_huc8(id = i)
+  huc8_watersheds = rbind(huc8_watersheds, appending)
+
+}
+
+ggplot(data = huc8_watersheds)+
+  geom_sf() +
+  labs(title = 'Ohio River Basin HUC8 Watersheds') +
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+```
+
+Pull out nhd waterbodies within the roi of the Ohio River Basin (huc8watersheds)
+```{r}
+
+huc8_watersheds$huc8 <- as.character(huc8_watersheds$huc8)
+
+OhioRiver_waterbodies <- data.frame() #same process as above
+
+for (i in huc8) {
+  roi <- huc8_watersheds %>%
+    filter(huc8 == i)
+    appending <- get_waterbodies(AOI = roi, id = NULL, t_srs = NULL, buffer = 0.5)
+  OhioRiver_waterbodies = rbind(OhioRiver_waterbodies, appending)
+
+}
+
+OhioRiver_waterbodies <- OhioRiver_waterbodies %>%
+  filter(ftype == 'LakePond' | ftype == 'Reservoir')
+
+# 11,643 lakes / ponds in the Ohio River Watershed
+
+#How many above 10 hectares? LimnoSat / HydroLakes threshold
+
+OhioRiver_waterbodies %>%
+  filter(areasqkm > .01)
+
+#10143 Lakes and Ponds should be included in LimnoSat / Hydrolakes
+
+ggplot(data = OhioRiver_waterbodies)+
+  geom_sf(colour = 'blue') +
+  labs(title = 'Waterbodies in Ohio River Basin') +
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+
+
