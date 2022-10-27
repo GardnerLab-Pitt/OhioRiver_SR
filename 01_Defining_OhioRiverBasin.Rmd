@@ -66,13 +66,6 @@ OhioRiver_waterbodies <- OhioRiver_waterbodies %>%
 
 # 11,643 lakes / ponds in the Ohio River Watershed
 
-#How many above 10 hectares? LimnoSat / HydroLakes threshold
-
-OhioRiver_waterbodies %>%
-  filter(areasqkm > .01)
-
-#10143 Lakes and Ponds should be included in LimnoSat / Hydrolakes
-
 ggplot(data = OhioRiver_waterbodies)+
   geom_sf(colour = 'blue') +
   labs(title = 'Waterbodies in Ohio River Basin') +
