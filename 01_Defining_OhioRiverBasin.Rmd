@@ -83,19 +83,7 @@ ggplot(data = OhioRiver_waterbodies)+
 #Now, take a sample from nhd waterbodies within the Ohio River Basin to test pull landsat collection 2 surface reflectance. 
 #Spatial join or filter nhd waterbodies (lakes/ponds) to huc 8 watersheds within the Ohio River Basin.
 ```{r}
-
-OhioRiver_waterbodies <- data.frame() #same process as above
-
-for (i in huc8) {
-  roi <- huc8_watersheds %>%
-    filter(huc8 == i)
-    appending <- get_waterbodies(AOI = roi, id = NULL, t_srs = NULL, buffer = 0.5)
-  OhioRiver_waterbodies = rbind(OhioRiver_waterbodies, appending)
-
-}
-
 OhioRiver_waterbodies <- OhioRiver_waterbodies %>%
-  filter(ftype == 'LakePond' | ftype == 'Reservoir') %>%
   st_centroid() #take centroid from polygons
 
 set.seed(100)
