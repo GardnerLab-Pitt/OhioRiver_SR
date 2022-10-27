@@ -1,15 +1,15 @@
 ---
 title: "01_Defining_OhioRiverBasin"
 output: html_document
-date: "2022-10-13"
+date: "2022-10-27"
 editor_options: 
   chunk_output_type: console
 ---
 
-
-
 ```{r}
-#This file and code below is meant to explore the new AOI (Ohio River Basin) I will be working with and the data within it. What I want to address are how many lakes are there in this basin, how many flowlines are covered within the RiverSR dataset, how many samples are included in AquaSat, etc.  
+#This file and code below is meant to explore the new AOI (Ohio River Basin) I will be working with and the data within it.
+
+#In the future, this code might just define all the waterbodies (lakes, rivers) within nhd that are within my new aoi and want to be used as a FeatureCollection to pull surface reflectance from. 
 ```
 
 
@@ -80,88 +80,29 @@ ggplot(data = OhioRiver_waterbodies)+
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 ```
 
-#How about rivers that are included in RiverSR? NHD Flowlines? How big do they have to be to be included in RiverSR?
+#Now, take a sample from nhd waterbodies within the Ohio River Basin to test pull landsat collection 2 surface reflectance. 
+#Spatial join or filter nhd waterbodies (lakes/ponds) to huc 8 watersheds within the Ohio River Basin.
 ```{r}
-?get_nhdplushr()
 
-OhioRiver_flowlines <- data.frame()
+OhioRiver_waterbodies <- data.frame() #same process as above
 
 for (i in huc8) {
   roi <- huc8_watersheds %>%
     filter(huc8 == i)
-    appending <- get_nhdplus(AOI = roi, realization = "flowline")
-  OhioRiver_flowlines = rbind(OhioRiver_flowlines, appending)
+    appending <- get_waterbodies(AOI = roi, id = NULL, t_srs = NULL, buffer = 0.5)
+  OhioRiver_waterbodies = rbind(OhioRiver_waterbodies, appending)
 
 }
 
-#Rivers in RiverSR have to be greater than (or equal to?) 60 m wide
+OhioRiver_waterbodies <- OhioRiver_waterbodies %>%
+  filter(ftype == 'LakePond' | ftype == 'Reservoir') %>%
+  st_centroid() #take centroid from polygons
 
-#ATM I'm not sure how to find river width ?
+set.seed(100)
+nhd_sample <- OhioRiver_waterbodies %>%
+  sample_n(size = 5)
 
-#I guess I could load in RiverSR,  join nhd_flowlines to RiverSR to filter for all the rivers in RiverSR? 
-
-comids <- read.csv("C:/Users/samsi/Desktop/COMID_ID.csv") #taken from RiverSF repository
-
-OhioRiver_flowlines_60m <- OhioRiver_flowlines %>%
-  filter(comid %in% comids$COMID)
-
-ggplot()+
-  geom_sf(data = huc8_watersheds, fill = NA, color = alpha("black", 0.2)) +
-  geom_sf(data = OhioRiver_waterbodies, colour = 'black') +
-  geom_sf(data = OhioRiver_flowlines_60m, colour = '#2166ac', size = 1.5) +
-  labs(title = 'Lakes and Flowlines (> 60 m wide) included within the Ohio River Basin') +
-  theme_bw()+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+#write .shp to add into gee as an asset
+write_sf(nhd_sample, "C:/Users/samsi/OneDrive - University of Pittsburgh/nhd_sample_lake_pull", driver = 'ESRI Shapefile')
 
 ```
-
-#Pull out AquaSat data over this aoi
-```{r}
-aquasat <- read.csv("C:/Users/samsi/Desktop/sr_wq_rs_join.csv")
-
-aquasat <- st_as_sf(aquasat, coords = c('long', 'lat'), crs = 4326, remove = FALSE) %>%
-   st_transform(st_crs(huc8_watersheds))
-
-aquasat <- aquasat %>%
-  drop_na(chl_a)
-
-#Ok, I'm going to want all of the aquasat data taken within my aoi
-
-aquasat.aoi <- data.frame()
-
-#this takes awhile
-for (i in huc8) {
-  roi <- huc8_watersheds %>%
-    filter(huc8 == i)
-    appending <- st_join(roi, aquasat, join = st_intersects)
-  aquasat.aoi = rbind(aquasat.aoi, appending)
-
-}
-
-#1866 obs between rivers and lakes in AquaSat in the Ohio River Basin
-
-aquasat.aoi <- aquasat.aoi %>%
-  st_drop_geometry()
-
-#some 40 odd na's in here were screwing things up, don't know where those came from? might need to check i non that 
-aquasat.aoi <- aquasat.aoi %>% 
-  drop_na(c('long','lat'))
-
-aquasat.aoi <- st_as_sf(aquasat.aoi, coords = c('long', 'lat'), crs = 4326, remove = FALSE)
-
-ggplot()+
-  geom_sf(data = huc8_watersheds, fill = NA, color = alpha("black", 0.2)) +
-  geom_sf(data = OhioRiver_waterbodies, colour = 'black') +
-  geom_sf(data = OhioRiver_flowlines_60m, colour = '#2166ac', size = 1) +
-  geom_sf(data = aquasat.aoi, colour = '#ca0020', size = 2) +
-  labs(title = 'Lakes, Flowlines (> 60 m wide), and AquaSat obs included within the Ohio River Basin') +
-  theme_bw()+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
-
-#how many unique sites in the aquasat aoi ? 
-
-no.sites <- unique(aquasat.aoi$SiteID)
-
-#536 sites over > 1800 obs , seems about right
-```
-
