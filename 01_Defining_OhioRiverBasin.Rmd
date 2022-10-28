@@ -37,11 +37,11 @@ for (i in huc8) {
 
 }
 
-ggplot(data = huc8_watersheds)+
-  geom_sf() +
-  labs(title = 'Ohio River Basin HUC8 Watersheds') +
-  theme_bw()+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+#ggplot(data = huc8_watersheds)+
+#  geom_sf() +
+#  labs(title = 'Ohio River Basin HUC8 Watersheds') +
+#  theme_bw()+
+#  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 
 
 ```
@@ -60,30 +60,38 @@ for (i in huc8) {
   OhioRiver_waterbodies = rbind(OhioRiver_waterbodies, appending)
 
 }
-
 OhioRiver_waterbodies <- OhioRiver_waterbodies %>%
   filter(ftype == 'LakePond' | ftype == 'Reservoir')
 
 # 11,643 lakes / ponds in the Ohio River Watershed
 
-ggplot(data = OhioRiver_waterbodies)+
-  geom_sf(colour = 'blue') +
-  labs(title = 'Waterbodies in Ohio River Basin') +
-  theme_bw()+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+#Spatial join nhd waterbodies (lakes/ponds) to huc 8 watersheds within the Ohio River Basin.
+OhioRiver_joined <- st_join(OhioRiver_waterbodies, huc8_watersheds, join = st_intersects, left = FALSE)
 ```
 
 #Now, take a sample from nhd waterbodies within the Ohio River Basin to test pull landsat collection 2 surface reflectance. 
-#Spatial join or filter nhd waterbodies (lakes/ponds) to huc 8 watersheds within the Ohio River Basin.
 ```{r}
-OhioRiver_waterbodies <- OhioRiver_waterbodies %>%
+waterbodies.centroid <- OhioRiver_joined %>%
   st_centroid() #take centroid from polygons
 
 set.seed(100)
-nhd_sample <- OhioRiver_waterbodies %>%
+nhd_sample <- waterbodies.centroid %>%
   sample_n(size = 5)
 
 #write .shp to add into gee as an asset
-write_sf(nhd_sample, "C:/Users/samsi/OneDrive - University of Pittsburgh/nhd_sample_lake_pull", driver = 'ESRI Shapefile')
+write_sf(nhd_sample, "C:/Users/samsi/OneDrive - University of Pittsburgh/nhd_sample", driver = 'ESRI Shapefile')
 
 ```
+
+#Now, subset all the waterbodies from one HUC 8 to test pull landsat collection 2 surface reflectance. 
+```{r}
+#upper Allegheny  
+
+UpperAllegheny <- waterbodies.centroid %>%
+  filter(name =='Upper Allegheny')
+
+write_sf(UpperAllegheny, "C:/Users/samsi/OneDrive - University of Pittsburgh/UpperAllegheny", driver = 'ESRI Shapefile')
+
+
+```
+
