@@ -1,0 +1,79 @@
+---
+title: "SR_build_C2"
+author: "Sam Sillen"
+date: "2022-12-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#Packages
+```{r}
+library(tidyverse)
+library(lubridate)
+library(data.table)
+```
+
+#Prep for merging date fields 
+```{r}
+insitu <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/Aquasat_Chl_2022.txt")
+
+#only want in situ data, not sr data
+
+insitu <- insitu %>%
+  select(SiteID,lat, long, date_unity, characteristicName, analytical_method, value, harmonized_unit, harmonized_depth, source, type, parameter:uniqueID)
+
+insitu <- insitu %>%
+  rename(date = "date_unity")
+
+
+insitu$date <- as_date(insitu$date)
+
+date_plus1 <- insitu %>%
+  mutate(date = date + 1)
+
+date_min1 <- insitu %>%
+  mutate(date = date - 1)
+
+```
+
+```{r}
+path <- "G:/My Drive/Collection2_test_pull_final"
+
+sr <- list.files(path=path, pattern=".csv", full.names = T) %>%
+  map_df(~ fread(., stringsAsFactors = F))
+
+sr <- sr %>%
+  filter(!is.na(Blue))
+
+#convert date which is miliseconds since epoch to real date time 
+
+#convert to seconds instead of miliseconds
+
+sr$date <- sr$date/1000
+  
+sr$date <- as.POSIXct(sr$date, origin = "1970-01-01")
+
+sr$date <- as_date(sr$date)
+
+date_0 <- inner_join(insitu, sr, by = c('SiteID', 'date'))
+
+date_0 <- date_0 %>%
+  mutate(matchup_difference = 0)
+
+date_plus1 <- inner_join(date_plus1, sr, by = c('SiteID', 'date'))
+
+date_plus1 <- date_plus1 %>%
+  mutate(matchup_difference = 1)
+
+date_min1 <- inner_join(date_min1,sr, by = c('SiteID', 'date'))
+
+date_min1 <- date_min1 %>%
+  mutate(matchup_difference = -1)
+
+binded <- rbind(date_0, date_plus1, date_min1)
+```
+
