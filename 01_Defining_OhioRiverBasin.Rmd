@@ -95,3 +95,15 @@ write_sf(UpperAllegheny, "C:/Users/samsi/OneDrive - University of Pittsburgh/Upp
 
 ```
 
+#For exploring pulling river surface reflectance
+```{r}
+OhioRiver_flowlines <- data.frame()
+
+for (i in huc8) {
+  roi <- huc8_watersheds %>%
+    filter(huc8 == i)
+    appending <- get_nhdplus(AOI = roi, realization = "flowline")
+  OhioRiver_flowlines = rbind(OhioRiver_flowlines, appending)
+}
+```
+
