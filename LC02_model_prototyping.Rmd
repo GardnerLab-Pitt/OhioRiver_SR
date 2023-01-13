@@ -1,0 +1,418 @@
+---
+title: "LC02 chl-a model prototyping"
+author: "John Gardner"
+date: "2022-09-28"
+output: html_document
+---
+packages
+```{r setup, include=FALSE}
+library(tidyverse)
+library(feather)
+library(viridis)
+library(sf)
+library(rgdal)
+library(maps)
+library(magrittr)
+library(purrr)
+library(data.table)
+library(tmap)
+library(ggthemes)
+library(dplyr)
+library(ggplot2)
+library(mapview)
+library(fs)
+library(httr)
+library(leaflet)
+library(lwgeom)
+library(nhdplusTools)
+library(USAboundaries)
+library(foreign)
+library(CAST)
+library(caret)
+library(sp)
+library(xgboost)
+library(Metrics)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r functions, echo=FALSE}
+## Functions we will use later
+# This function randomly samples match-ups across different locations, times, and concentrations for splitting training/validation data
+
+holdout <- function(x) {
+
+  x <- x %>%
+  group_by(long_group, time_group) %>% #split up into spatial and temporal groups
+  dplyr::mutate(mag = cut(value, quantile(
+  x = value,
+  c(0, 0.2, 0.4, 0.6, 0.8, 0.9, 1),
+  include.lowest = T
+  )),
+  mag = factor(
+  mag,
+  labels = c( 0.2, 0.4, 0.6, 0.8, 0.9, 1)
+  )) %>%
+  ungroup()
+  
+  set.seed(22)
+  
+  train <- x %>%
+  group_by(time_group, long_group, mag) %>%
+  sample_frac(.9) %>% #90% of data will be used for training
+  ungroup() %>%
+  dplyr::mutate(.partitions = 1)
+  
+  validate <- x %>%
+   anti_join(train) %>%
+   dplyr::mutate(.partitions = 2)
+
+  out <- train %>%
+  bind_rows(validate) 
+    
+  return(out)
+}
+
+```
+
+# Read in spatial data to filter matchup data to ROI
+```{r chla}
+# SF for HUC2 basins from USDA NHD WBD - includes Mid Atlantic (HUC2_02), Great Lakes (HUC2_04), Ohio (HUC2_05), Tennessee (HUC2_06) and Upper Mississippi (HUC2_07)
+huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/AlgalBloom_ORB/HUC2_Merge_Shapefile/HUC2_Merge", layer="HUC2_Merge")
+st_transform(huc2_basins, crs ="+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
+
+# Load in LC02 matchup database
+matchup <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/LC02_matchup.feather") %>% 
+filter(harmonized_parameter == 'chl.a') %>% 
+mutate(uniqueID = row_number())
+
+pnts <- matchup %>% # Create new df with matchup ID, lat and long columns
+  select(uniqueID, long, lat) 
+sp_pnts = st_as_sf(pnts, coords=c('long', 'lat')) 
+st_crs(sp_pnts)=4326
+sp_pnts = st_transform(sp_pnts, crs=st_crs(huc2_basins)) # Make points spatial and set coordinate system to same as the HUC polygon
+
+#Perform intersection between HUC2 shapefile and matchup points
+Int=st_intersects(sp_pnts, huc2_basins)
+#Create a new column in the sp_pnts data frame and write intersection results to it
+sp_pnts$Intersect=lengths(Int)>0 #Finds only countries where intersection is TRUE
+#Combine intersection results with original matchup dataset
+matchup <- cbind(matchup, sp_pnts$Intersect) 
+#Rename newly added column 
+
+colnames(matchup)[116] <- "Intersect"
+```
+
+# Applying filters to improve model performance 
+```{r}
+# Finish cleaning the data by filtering out matchups that are outside of HUC boundaries and other filters
+matchup_filter <- matchup %>%
+ # filter(dswe == 1) %>% 
+  #filter(hillShadow ==1 | is.na(hillShadow)) %>%
+  filter(value > 0.1) %>% # Minimum accepted chlorophyll value
+  filter(value < 100) %>% # Filtering down to 100 to reduce large residuals, but we might want to increase this 
+  filter(Intersect == TRUE) %>%   # Only select points within HUC boundaries 
+  filter(pCount_dswe1 > 110) %>%
+  filter(sd_Blue < 0.003) %>%
+  filter(sd_Red < 0.003) %>% 
+  filter(sd_Green < 0.003) %>% 
+  filter(sd_Nir < 0.003) %>% 
+  filter(sd_Swir1 < 0.003) %>%
+  filter(sd_Swir2 < 0.003) %>%
+  filter(characteristicName != 'Chlorophyll a, corrected for pheophytin') %>%
+  filter(characteristicName != 'Chlorophyll a, (probe)')
+
+#Add new spectral indices for chl-a detection
+matchup_filter$GCI <- matchup_filter$Nir/(matchup_filter$Green-1) #Green Chlorophyll Index
+matchup_filter$IRG <- matchup_filter$Red-matchup_filter$Green #Red Green Ratio Index
+matchup_filter$SABI <- (matchup_filter$Nir-matchup_filter$Red)/(matchup_filter$Blue + matchup_filter$Green)
+matchup_filter$KIVU <- (matchup_filter$Blue-matchup_filter$Red)/matchup_filter$Green
+matchup_filter$GB <- matchup_filter$Green/matchup_filter$Blue
+matchup_filter$GNDVI <- (matchup_filter$Nir-matchup_filter$Green)/(matchup_filter$Nir+matchup_filter$Green)
+matchup_filter$EVI <- 2.5*((matchup_filter$Nir-matchup_filter$Red)/(matchup_filter$Nir+((6*matchup_filter$Red)-(7.5*matchup_filter$Blue))+1))
+#matchup$KAB <- 1.67-3.94*log(matchup$Blue)+3.78*log(matchup$Red)
+#matchup$KRL <- (((matchup$Blue/matchup$Red)*matchup$Nir)-98)/0.75
+
+```
+
+# Settinb up base model (no ffs, hypertuning)
+```{r}
+
+# make splits for training/validation
+df <- matchup_filter %>%
+  mutate(lat_group = cut_number(lat, 2, right= F),
+         long_group = cut_number(long, 2, right=F),
+         date = lubridate::ymd(date),
+         julian = as.numeric(julian.Date(date)),
+         space_group = paste0(lat_group,long_group),
+         time_group = cut_number(julian, 3, right=F)) %>%
+         holdout() %>% 
+         ungroup() %>%
+         as.data.frame() %>%
+  filter_all(all_vars(!is.infinite(.))) %>%
+  filter_all(all_vars(!is.nan(.))) 
+
+# training data #80% of data to training 
+train <- df %>%
+  filter(.partitions ==1) %>% 
+  ungroup() %>%
+  as.data.frame() %>%
+  filter_all(all_vars(!is.infinite(.))) %>%
+  filter_all(all_vars(!is.nan(.))) 
+
+
+# validation data $20% of data to validation
+validate <- df %>%
+  filter(.partitions ==2) %>%
+  ungroup() %>%
+  as.data.frame()%>%
+  filter_all(all_vars(!is.infinite(.))) %>%
+  filter_all(all_vars(!is.nan(.))) 
+
+# make validation row index so you can rejoin later
+val.cols <- df %>% 
+  filter(.partitions ==2) %>%
+  ungroup() %>%
+  filter_all(all_vars(!is.infinite(.))) %>%
+  filter_all(all_vars(!is.nan(.))) 
+
+
+
+#Select some spectral indices/bands to use as predictors in model. Consider looking at lit and adding a bunch more that are good for chl-a specifically. 
+features_1 <- df %>%
+  select(NR:gn.gn, GCI, IRG, SABI, KIVU, GB, GNDVI, EVI) %>%
+  names(.)
+
+# create cross validation folds for spatial-temporal cross validation
+folds <- CreateSpacetimeFolds(train, spacevar = "long_group", timevar = "time_group" , k=2)
+
+# set training parameters
+train_control_final <- caret::trainControl(
+  method = "cv",
+  savePredictions = T,
+  returnResamp = 'final',
+  index = folds$index,
+  indexOut = folds$indexOut,
+  verboseIter = T,
+  allowParallel = TRUE,
+  p = 0.8 #80% of the data is used to predict the other 20%
+  )
+
+# pick some defaut hyperparameters. No hyperparameter tuning yet here
+  
+grid_final <-expand.grid(
+  nrounds = 50,
+  alpha = 0,
+  lambda =1,
+  eta = 0.3
+)
+
+# make a model
+model <- caret::train(
+  x = train[,features_1],
+  y = train$value,
+  trControl = train_control_final,
+  tuneGrid = grid_final,
+  method = "xgbLinear",
+ # preProcess = c('center', 'scale'),
+   importance = T,
+  verbose = TRUE
+)
+
+
+# use model to make predictions over validation data
+pred<- predict(model, validate[,features_1])
+actual <- (validate$value)
+uniqueID <- val.cols$uniqueID
+
+output <- tibble(Predicted = pred, Actual = actual, uniqueID = uniqueID) %>%
+  mutate(Actual = (Actual), Predicted =  (Predicted)) %>%
+  left_join(df, by="uniqueID") %>%
+  mutate(residual = Actual - Predicted,
+         year = year(date),
+         month = month(date),
+         obs = ifelse(abs(residual) > 30, "bad", "good"))
+
+# calcualate error metrics 
+evals <- output %>%
+  mutate(Actual = (Actual), 
+         Predicted = (Predicted)) %>%
+  summarise(rmse = rmse(Actual, Predicted),
+            mae = mae(Actual, Predicted),
+            mape = mape(Actual, Predicted),
+            bias = bias(Actual, Predicted),
+            p.bias = percent_bias(Actual, Predicted),
+            smape = smape(Actual, Predicted)) 
+evals %>% view()
+
+#Initial model had rmse 15 and mae 8 ; now we see rmse of 7.77 and mae of 4.12
+
+# plot validation
+ggplot(output , aes(x = (Actual), y = (Predicted))) + 
+  geom_point() +
+  xlim(0, 100) +
+  ylim(0, 100) +
+  geom_abline(slope=1, intercept = 0, color = 'black')+
+  xlab("Measured  (ug/L)") +
+  ylab("Predicted (ug/L)")+
+  theme_few() 
+
+```
+
+# FFS for selecting best combination of predictor variables 
+```{r}
+
+set.seed(10)
+
+folds <- CreateSpacetimeFolds(train,
+  spacevar = "long_group",
+  timevar = "time_group" ,
+  k = 2)
+  
+control <- trainControl(
+  method = "cv",
+  savePredictions = 'none',
+  returnResamp = 'final',
+  index = folds$index,
+  indexOut = folds$indexOut,
+  p = 0.8)
+  
+  ## Do initial feature selection with conservative hyperparameters
+tuneGrid1 <- expand.grid(
+  nrounds = 300,
+  eta = .1,
+  lambda = 0,
+  alpha = 0)
+
+
+# Set it up to run in parallel. This can take 1-2 days.
+cl <- makePSOCKcluster(availableCores() - 4)
+registerDoParallel(cl)
+
+ffs <- ffs(df[,features_1], df$value, method = 'xgbLinear', metric = 'RMSE', tuneGrid = tuneGrid1, Control = control, verbose = T)
+
+on.exit(stopCluster(cl))
+registerDoSEQ()
+
+ffsResults <- ffs$perf_all
+
+# Save the results
+#write_feather(ffsResults, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/ffsResults.feather")
+
+ffsResults %>%
+  group_by(nvar) %>%
+  summarise(RMSE = median(RMSE),
+            SE = median(SE)) %>%
+  ggplot(.) + geom_line(aes(x = nvar, y = RMSE)) +
+  geom_errorbar(aes(x = nvar, ymin = RMSE - SE, ymax = RMSE + SE), color = 'red')
+
+#ggsave(paste0('figs/rfeRMSE_', iter, '.png'), device = 'png', width = 6, height = 4, units = 'in')
+
+```
+
+# Hyperparamter tuning 
+```{r}
+
+ffs_Results <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/ffsResults.feather")
+
+ffs_features <- ffs_Results[ffs_Results$RMSE == min(ffs_Results$RMSE),] %>%
+  dplyr::select(-c(nvar, RMSE, SE)) %>%
+  paste(.) %>% .[.!= 'NA']
+
+grid_base <- expand.grid(
+  nrounds = seq(100,500,100),
+  alpha = c(0.01, 0.1, 0.5, 1),
+  lambda = c(0.01, 0.1, 0.5, 1),
+  eta = c(0.05, 0.1, 0.3)
+)
+
+set.seed(10)
+
+folds <- CreateSpacetimeFolds(train, spacevar = "long_group", timevar = "time_group" , k=2)
+
+train_control <- caret::trainControl(
+  method = "cv",
+  savePredictions = F,
+  returnResamp = 'final',
+  index = folds$index,
+  indexOut = folds$indexOut,
+  verboseIter = T,
+  allowParallel = TRUE,
+  p = 0.8
+  )
+  
+base_model <- caret::train(
+  x = train[,ffs_features],
+  y = train$value,
+  trControl = train_control,
+  tuneGrid = grid_base,
+  method = "xgbLinear",
+  verbose = TRUE,
+ # preProcess = c('center', 'scale'),
+  importance = F
+)
+
+base_model$bestTune
+
+# 
+train_control_final <- caret::trainControl(
+  method = "cv",
+  savePredictions = T,
+  returnResamp = 'final',
+  index = folds$index,
+  indexOut = folds$indexOut,
+  verboseIter = T,
+  allowParallel = TRUE,
+  p = 0.8
+  )
+  
+grid_final <- expand.grid(
+  nrounds = base_model$bestTune$nrounds,
+  alpha = base_model$bestTune$alpha,
+  lambda = base_model$bestTune$lambda,
+  eta = base_model$bestTune$eta
+)
+
+model <- caret::train(
+  x = train[,ffs_features],
+  y = train$value,
+  trControl = train_control_final,
+  tuneGrid = grid_final,
+  method = "xgbLinear",
+ # preProcess = c('center', 'scale'),
+  importance = T,
+  verbose = TRUE
+)
+
+```
+
+```{r eval}
+
+# evaulate the model
+pred<- predict(model, validate[,ffs_features])
+actual <- (validate$value)
+uniqueID <- val.cols$uniqueID
+
+
+output <- tibble(Predicted = pred, Actual = actual,uniqueID = uniqueID) %>%
+  mutate(Actual = (Actual), Predicted = (Predicted)) %>%
+  left_join(df, by="uniqueID") %>%
+  mutate(residual = Actual - Predicted,
+         year = year(date),
+         month = month(date),
+         obs = ifelse(abs(residual) > quantile(abs(residual), .7, na.rm=T), "bad", "good"))
+
+# calculate error metrics 
+evals <- output %>%
+  mutate(Actual = (Actual), 
+         Predicted = (Predicted)) %>%
+  summarise(rmse = rmse(Actual, Predicted),
+            mae = mae(Actual, Predicted),
+            mape = mape(Actual, Predicted),
+            bias = bias(Actual, Predicted),
+            p.bias = percent_bias(Actual, Predicted),
+            smape = smape(Actual, Predicted)) 
+
+evals %>% view()
+```
+
