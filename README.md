@@ -6,6 +6,6 @@ This repository contains code for creating a dataset of chlorophyll-a and satell
 
 * The LC02_polygon_pull file is for pulling surface reflectance over all CONUS river reaches for Landsat Collection 2
 
-* The SR build file is for applying band correction coefficeints and cleaning up SR pull data into meaningful datasets. 
+* The SR correction file is for creating band correction coefficeints to apply to opitcal band data. 
 
 * The model prototyping code is for testing models for predicting chlorophyll-a. 
