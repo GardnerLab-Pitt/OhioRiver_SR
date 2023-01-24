@@ -90,13 +90,6 @@ matchup <- matchup %>%
 filter(harmonized_parameter == 'chl.a') %>% 
 mutate(uniqueID = row_number())
 
-#location_data <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/parametersMunged_corrected_v4.feather") %>% 
-#filter(SiteID %in% matchup$SiteID) %>% 
-#distinct(SiteID, .keep_all = TRUE) %>% 
-#select(SiteID, lat, long)
-
-#matchup <- left_join(matchup, location_data)
-
 pnts <- matchup %>% # Create new df with matchup ID, lat and long columns
   select(uniqueID, long, lat) 
 sp_pnts = st_as_sf(pnts, coords=c('long', 'lat')) 
@@ -147,7 +140,6 @@ matchup_filter$KRL <- (((matchup_filter$Blue/matchup_filter$Red)*matchup_filter$
 
 # Setting up base model (no ffs, hypertuning)
 ```{r}
-
 # make splits for training/validation
 df <- matchup_filter %>%
   mutate(lat_group = cut_number(lat, 2, right= F),
@@ -162,7 +154,7 @@ df <- matchup_filter %>%
   filter_all(all_vars(!is.infinite(.))) %>%
   filter_all(all_vars(!is.nan(.)))
 
-outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/outliers_sum.csv")
+outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/outliers_sum.csv") # from outlier test 
 
 outliers <- outliers %>% 
 filter(count > 3)
