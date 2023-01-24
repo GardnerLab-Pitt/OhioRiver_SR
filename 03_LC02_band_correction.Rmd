@@ -1,7 +1,7 @@
 ---
 title: "Optical Band Corrections"
 author: "Sam Sillen"
-date: "2022-12-07"
+date: "2022-01-24"
 output: html_document
 ---
 
@@ -9,30 +9,36 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Overview
+```{r}
+# This file uses all the available SR data over wqp/lagos sites (not just in-situ matchups) to create correlation coefficients between different landsat sensors. 
+
+# These coefficients will be applied to 1) the matchup dataset; and 2) the River SR dataset.  
+
+```
 
 # Packages
 ```{r}
 library(tidyverse)
 library(lubridate)
 library(data.table)
+library(broom)
 ```
 
 # Prepare SR data for joining with in situ 
 ```{r}
 
-sr_path <- "G:/My Drive/C2_all_wqp_lagos_sites_SR_pull"
+sr_path <- "G:/My Drive/LC02_all_wqp_lagos_sites_SR_pull"
 
 sr_raw <- list.files(path=sr_path, pattern=".csv", full.names = T) %>%
   map_df(~ fread(., stringsAsFactors = F))
-
+sr %>% sample_n(size = 100) %>% view()
 sr <- sr_raw %>%
   filter(!is.na(Blue)) %>% # Drop all of rows that have been masked but still have lines due to metadata extraction 
-  mutate(date = date / 1000) # Have to convert miliseconds to seconds for following line 
-
-# Convert miliseconds since epoch to date
-sr$datetime <- as.POSIXct(sr$date, origin = "1970-01-01", tz = 'UTC')
-sr$date <- as.POSIXct(sr$date, origin = "1970-01-01", tz = 'UTC')
-sr$date <- as_date(sr$date)
+  mutate(date = date / 1000, # Have to convert miliseconds to seconds for following line 
+         datetime =  as.POSIXct(date, origin = "1970-01-01", tz = 'UTC'),
+         date = as.POSIXct(date, origin = "1970-01-01", tz = 'UTC'),
+         date = as_date(date))
 ```
 
 ```{r}
@@ -239,32 +245,8 @@ coef_7 <- tibble(band = c("Blue", "Red", "Green", "Nir", "Swir1", "Swir2"), inte
 coef_9 <- coef_8 %>% 
 mutate(sat = "LC09")
 
-
 corr_coef <- bind_rows(coef_5, coef_7, coef_8, coef_9) %>%
   ungroup()
 
-return(corr_coef)
-
-correction_coef_99 <- corr_coef %>%
-  filter(fit %in% c(NA, "98_quant")) %>%
-  dplyr::select(-fit)
-
-sr_built <- sr_clean %>%
-  mutate(rn = row_number()) %>%
-  mutate(sat = as.character(sat)) %>%
-  gather(Red ,Green, Blue, Nir, Swir1, Swir2, key='band', value='value') %>%
-  group_by(band, sat) %>%
-  left_join(correction_coef_99, by=c("band", "sat")) %>%
-  mutate(value_cor=  coef2*value^ 2 + coef1*value + intercept) %>%
-  ungroup() %>%
-  mutate(value_cor = ifelse(value_cor <=0, value, value_cor)) %>%
-  dplyr::select(-intercept, -coef1, -coef2) %>%
-  pivot_wider(names_from = band,
-              values_from = c("value", "value_cor"))  %>%
-    rename_at(vars(starts_with("value_")),
-           function(x) stringr::str_replace_all(x, "value_", "")) %>%
-    rename_at(vars(Red, Green, Blue, Nir, Swir1, Swir2),function(x) paste0(x,"_raw")) %>%
-    rename_at(vars(starts_with("cor")),            funs(stringr::str_replace_all(., "cor_", ""))) 
-
-
+write_csv(corr_coef, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef.csv")
 ```
