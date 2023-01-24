@@ -1,0 +1,180 @@
+---
+title: "Untitled"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(tidyverse)
+library(lubridate)
+library(data.table)
+library(broom)
+library(feather)
+```
+
+# Load files 
+
+```{r}
+
+corr_coef <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/LC02_Corr_Coef.csv") 
+
+correction_coef_99 <- corr_coef %>%
+  filter(fit %in% c(NA, "98_quant")) %>%
+  dplyr::select(-fit)
+
+sr_clean <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_SR_Clean.csv")
+
+```
+
+```{r}
+setwd("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS")
+
+in_situ_raw <- read_feather("wqp_lagos_usgs_long_methods.feather")
+
+# Now I will create additional environment variables with date fields that have been added to , in order to join via +- 1 day, +- 2 day. So, there will be a variable with date + 1 , date - 1, etc
+
+date0 <- in_situ_raw %>% 
+ mutate(date = ymd(date)) 
+
+date_plus_1 <- date0 %>%
+ mutate(date = ymd(date),
+        date = date + 1)
+
+date_plus_2 <- date0 %>%
+ mutate(date = ymd(date),
+        date = date + 2)
+
+date_min_1 <- date0 %>%
+ mutate(date = ymd(date),
+        date = date - 1)
+
+date_min_2 <- date0 %>%
+ mutate(date = ymd(date),
+        date = date - 2)
+
+#date field may have to be transformed into a date object
+
+sr_clean$date <- as_date(sr_clean$date)
+
+date0 <- inner_join(date0, sr_clean, by = c('SiteID', 'date'))
+
+date_min_1 <- inner_join(date_min_1, sr_clean, by = c('SiteID', 'date'))
+
+date_min_2 <- inner_join(date_min_2, sr_clean, by = c('SiteID', 'date'))
+
+date_plus_1 <- inner_join(date_plus_1, sr_clean, by = c('SiteID', 'date'))
+
+date_plus_2 <- inner_join(date_plus_2, sr_clean, by = c('SiteID', 'date'))
+
+#bind them up and apply coefficients
+sr_final <- rbind(date0, date_min_1, date_min_2, date_plus_1, date_plus_2) %>% 
+  mutate(rn = row_number()) %>%
+  mutate(sat = as.character(sat)) %>%
+  gather(Red ,Green, Blue, Nir, Swir1, Swir2, key='band', value='value') %>%
+  group_by(band, sat) %>%
+  left_join(correction_coef_99, by=c("band", "sat")) %>%
+  mutate(value_cor=  coef2*value^ 2 + coef1*value + intercept) %>%
+  ungroup() %>%
+  mutate(value_cor = ifelse(value_cor <=0, value, value_cor)) %>%
+  dplyr::select(-intercept, -coef1, -coef2) %>%
+  pivot_wider(names_from = band,
+              values_from = c("value", "value_cor"))  %>%
+    rename_at(vars(starts_with("value_")),
+           function(x) stringr::str_replace_all(x, "value_", "")) %>%
+    rename_at(vars(Red, Green, Blue, Nir, Swir1, Swir2),function(x) paste0(x,"_raw")) %>%
+    rename_at(vars(starts_with("cor")),            funs(stringr::str_replace_all(., "cor_", ""))) 
+```
+
+# Adding band raitios , color metrics for model predictors 
+```{r}
+
+pull_transform <- function(df, maxRGB=1, RGB=F) {
+  
+  if(RGB == T) { 
+    
+    maxRGB <- maxRGB
+    
+    data <- df %>%
+      filter_at(vars(Red, Green, Blue), all_vars(.< maxRGB))
+    
+  }else{ 
+    data <- df    
+
+    maxRGB <- df  %>%
+      dplyr::select(Red, Green, Blue) %>%
+      dplyr::summarise(maxRGB = max(., na.rm=F)) 
+    
+    maxRGB <- maxRGB$maxRGB
+  }
+  
+  data <- data %>%
+    dplyr::mutate(NR = Nir/Red,
+                  BR = Blue/Red,
+                  GR = Green/Red,
+                  SR = Swir1/Red,
+                  BG = Blue/Green,
+                  RG = Red/Green, 
+                  NG = Nir/Green,
+                  SG = Swir1/Green,
+                  BN = Blue/Nir,
+                  GN = Green/Nir,
+                  RN = Red/Nir,
+                  SN = Swir1/Nir,
+                  BS = Blue/Swir1,
+                  GS = Green/Swir1,
+                  RS = Red/Swir1,
+                  NS = Nir/Swir1,
+                  R.GN = Red/ (Green + Nir),
+                  R.GB = Red/ (Green + Blue),
+                  R.GS = Red/ (Green + Swir1),
+                  R.BN = Red/ (Blue + Nir),
+                  R.BS = Red/ (Blue + Swir1),
+                  R.NS = Red/ (Nir + Swir1),
+                  G.BR = Green/ (Blue + Red),
+                  G.BN = Green / (Blue + Nir),
+                  G.BS = Green / (Blue + Swir1),
+                  G.RN = Green / (Red + Nir),
+                  G.RB = Green / (Red + Blue),
+                  G.NS = Green / (Nir + Swir1),
+                  B.RG = Blue / (Red + Green),
+                  B.RN = Blue / (Red + Nir),
+                  B.RS = Blue / (Red + Swir1),
+                  B.GN = Blue / (Green + Nir),
+                  B.GS = Blue / (Green + Swir1),
+                  B.NS = Blue / (Nir + Swir1),
+                  N.RG = Nir / (Red + Green),
+                  N.RB = Nir / (Red + Blue),
+                  N.RS = Nir / (Red + Swir1),
+                  N.GB = Nir / (Green + Blue),
+                  N.GS = Nir / (Green + Swir1),
+                  N.BS = Nir / (Blue  + Swir1),
+                  GR2 = (Green + Red) / 2,
+                  GN2 = (Green + Nir) / 2,
+                  #blooms
+                  BR_G = (Blue - Red) / Green,
+                  NS_NR = (Nir - Swir1) / (Red - Swir1),
+                  fai = Nir - (Red + (Swir1-Red)*((830-660)/(1650-660))),
+                  # fai = (nir - red) + (red -swir) * (830-660)/(1648-660)
+                  N_S= Nir - Swir1,
+                  N_R = Nir- Red,
+                  ndvi = ((Nir-Red)/(Nir+Red)),
+                  ndwi = ((Green- Swir1)/(Green + Swir1)),
+                  ndssi = ((Blue - Nir)/ (Blue + Nir)),
+                  gn.gn= ((Green- Nir)/ (Green + Nir)))
+                  hue = rgb2hsv(r=Red, g=Green, b=Blue, maxColorValue = maxRGB)[1,],
+                  saturation = rgb2hsv(r=Red, g=Green,  b=Blue, maxColorValue = maxRGB)[2,],
+                  bright = rgb2hsv(r=Red, g=Green,  b=Blue, maxColorValue = maxRGB)[3,],
+                  bright_tot = (Red + Green + Nir +Blue),
+                  dw = chroma(R=Red, G=Green, B=Blue),
+                  hexcolor = rgb(r=Red, g=Green, b=Blue, maxColorValue = maxRGB)) 
+
+  return(data)
+}
+
+sr_final <- pull_transform(sr_final, RGB=F, maxRGB=1) 
+
+```

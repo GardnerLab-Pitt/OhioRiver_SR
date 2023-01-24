@@ -249,4 +249,5 @@ corr_coef <- bind_rows(coef_5, coef_7, coef_8, coef_9) %>%
   ungroup()
 
 write_csv(corr_coef, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef.csv") 
+write_csv(sr_clean, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_SR_Clean.csv")
 ```
