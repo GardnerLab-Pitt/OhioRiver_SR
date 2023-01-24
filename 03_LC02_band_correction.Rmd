@@ -242,11 +242,11 @@ coef_8 <- sr_78_rank %>%
 
 coef_7 <- tibble(band = c("Blue", "Red", "Green", "Nir", "Swir1", "Swir2"), intercept = 0, coef1=1, coef2=0, sat= "LE07")
 
-coef_9 <- coef_8 %>% 
+coef_9 <- coef_8 %>% #Landsat 9 sensor is virtually the same as LS 8 , so we are assuming the coefficients should be the same 
 mutate(sat = "LC09")
 
 corr_coef <- bind_rows(coef_5, coef_7, coef_8, coef_9) %>%
   ungroup()
 
-write_csv(corr_coef, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef.csv")
+write_csv(corr_coef, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef.csv") 
 ```
