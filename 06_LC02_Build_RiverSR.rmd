@@ -1,0 +1,193 @@
+---
+title: "Untitled"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages 
+```{r}
+library(tidyverse)
+library(lubridate)
+library(data.table)
+library(feather)
+library(ggplot2)
+library(httpgd)
+library(broom)
+```
+
+# Prepare SR data 
+```{r}
+
+sr_path <- "G:/My Drive/LC02_Polygon_Pull"
+
+sr_raw <- list.files(path=sr_path, pattern=".csv", full.names = T) %>%
+  map_df(~ fread(., stringsAsFactors = F))
+
+sr <- sr_raw %>%
+  filter(!is.na(Blue)) %>% # Drop all of rows that have been masked but still have lines due to metadata extraction 
+  mutate(date = date / 1000) # Have to convert miliseconds to seconds for following line 
+
+# Convert miliseconds since epoch to date
+sr$datetime <- as.POSIXct(sr$date, origin = "1970-01-01", tz = 'UTC')
+sr$date <- as.POSIXct(sr$date, origin = "1970-01-01", tz = 'UTC')
+sr$date <- as_date(sr$date)
+```
+
+# Clean SR data 
+```{r} 
+
+sr_clean <- sr %>% 
+    filter(pCount_dswe1 > 5, 
+    hillShadow > 0, 
+    Blue <= 1, 
+    Blue >= -0.1999725,
+    Green <= 1, 
+    Green >= -0.1999725, 
+    Red <= 1, 
+    Red >= -0.1999725,
+    Swir1 <= 1, 
+    Swir1 >= -0.1999725,
+    Swir2 <= 1, 
+    Swir2 >= -0.1999725) %>% 
+    rename(index = "system:index") %>%
+    mutate(LT05 = str_extract(index, pattern = c('LT05')),
+           LE07 = str_extract(index, pattern = c('LE07')),
+           LC08 = str_extract(index, pattern = c('LC08')),
+           LC09 = str_extract(index, pattern = c('LC09')),
+           sat = coalesce(LT05, LE07, LC08, LC09)) %>%
+    select(-LT05, -LE07, -LC08, -LC09)   %>% 
+    mutate(month = as.numeric(month(date)),
+      year = year(date),
+      hour = hour(datetime)) %>%
+    mutate(season = case_when(
+      month %in%  9:11 ~ "Fall",
+      month %in%  c(12,1,2)  ~ "Winter",
+      month %in%  3:5  ~ "Spring",
+      TRUE ~ "Summer")) %>%
+    mutate(decade= cut(year, breaks = c(1983,1990,1995,2000,2005,2010,2015,2020),
+                       labels = c(1990,1995,2000,2005,2010,2015,2020) )) %>%
+    rename(landsatID = 'index') %>% 
+    ungroup()
+```
+
+# Apply correction coefficients
+```{r}
+corr_coef <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/corr_coef.csv") %>%
+  ungroup()
+
+correction_coef_99 <- corr_coef %>%
+  filter(fit %in% c(NA, "98_quant")) %>%
+  dplyr::select(-fit)
+
+sr_built <- sr_clean %>%
+  mutate(rn = row_number()) %>%
+  mutate(sat = as.character(sat)) %>%
+  gather(Red ,Green, Blue, Nir, Swir1, Swir2, key='band', value='value') %>%
+  group_by(band, sat) %>%
+  left_join(correction_coef_99, by=c("band", "sat")) %>%
+  mutate(value_cor=  coef2*value^ 2 + coef1*value + intercept) %>%
+  ungroup() %>%
+  mutate(value_cor = ifelse(value_cor <=0, value, value_cor)) %>%
+  dplyr::select(-intercept, -coef1, -coef2) %>%
+  pivot_wider(names_from = band,
+              values_from = c("value", "value_cor"))  %>%
+    rename_at(vars(starts_with("value_")),
+           function(x) stringr::str_replace_all(x, "value_", "")) %>%
+    rename_at(vars(Red, Green, Blue, Nir, Swir1, Swir2),function(x) paste0(x,"_raw")) %>%
+    rename_at(vars(starts_with("cor")),            funs(stringr::str_replace_all(., "cor_", ""))) 
+
+```
+
+
+# Add band ratios, color metrics 
+```{r} testing
+color_test <- sr_built
+
+color_test <- color_test %>% 
+sample_n(size = 100)
+
+pull_transform <- function(df, maxRGB=1, RGB=F) {
+  
+    data <- df
+    
+    maxRGB <- df  %>%
+      dplyr::select(Red, Green, Blue) %>%
+      dplyr::summarise(maxRGB = max(., na.rm=T)) 
+    
+    maxRGB <- maxRGB$maxRGB
+  }
+  
+data <- data %>%
+    dplyr::mutate(NR = Nir/Red,
+                  BR = Blue/Red,
+                  GR = Green/Red,
+                  SR = Swir1/Red,
+                  BG = Blue/Green,
+                  RG = Red/Green, 
+                  NG = Nir/Green,
+                  SG = Swir1/Green,
+                  BN = Blue/Nir,
+                  GN = Green/Nir,
+                  RN = Red/Nir,
+                  SN = Swir1/Nir,
+                  BS = Blue/Swir1,
+                  GS = Green/Swir1,
+                  RS = Red/Swir1,
+                  NS = Nir/Swir1,
+                  R.GN = Red/ (Green + Nir),
+                  R.GB = Red/ (Green + Blue),
+                  R.GS = Red/ (Green + Swir1),
+                  R.BN = Red/ (Blue + Nir),
+                  R.BS = Red/ (Blue + Swir1),
+                  R.NS = Red/ (Nir + Swir1),
+                  G.BR = Green/ (Blue + Red),
+                  G.BN = Green / (Blue + Nir),
+                  G.BS = Green / (Blue + Swir1),
+                  G.RN = Green / (Red + Nir),
+                  G.RB = Green / (Red + Blue),
+                  G.NS = Green / (Nir + Swir1),
+                  B.RG = Blue / (Red + Green),
+                  B.RN = Blue / (Red + Nir),
+                  B.RS = Blue / (Red + Swir1),
+                  B.GN = Blue / (Green + Nir),
+                  B.GS = Blue / (Green + Swir1),
+                  B.NS = Blue / (Nir + Swir1),
+                  N.RG = Nir / (Red + Green),
+                  N.RB = Nir / (Red + Blue),
+                  N.RS = Nir / (Red + Swir1),
+                  N.GB = Nir / (Green + Blue),
+                  N.GS = Nir / (Green + Swir1),
+                  N.BS = Nir / (Blue  + Swir1),
+                  GR2 = (Green + Red) / 2,
+                  GN2 = (Green + Nir) / 2,
+                  #blooms
+                  BR_G = (Blue - Red) / Green,
+                  NS_NR = (Nir - Swir1) / (Red - Swir1),
+                  fai = Nir - (Red + (Swir1-Red)*((830-660)/(1650-660))),
+                  fai = (nir - red) + (red -swir) * (830-660)/(1648-660)
+                  N_S= Nir - Swir1,
+                  N_R = Nir- Red,
+                  ndvi = ((Nir-Red)/(Nir+Red)),
+                  ndwi = ((Green- Swir1)/(Green + Swir1)),
+                  ndssi = ((Blue - Nir)/ (Blue + Nir)),
+                  gn.gn= ((Green- Nir)/ (Green + Nir)),
+                  hue = rgb2hsv(r=Red, g=Green, b=Blue, maxColorValue = maxRGB)[1,])
+                  saturation = rgb2hsv(r=red, g=green,  b=blue, maxColorValue = maxRGB)[2,],
+                  bright = rgb2hsv(r=red, g=green,  b=blue, maxColorValue = maxRGB)[3,],
+                  bright_tot = (red + green + nir +blue),
+                  dw = chroma(R=red, G=green, B=blue),
+                  hexcolor = rgb(r=red, g=green, b=blue, maxColorValue = maxRGB)) 
+
+  return(data)
+}
+
+sr_final_polygons <- pull_transform(color_test, RGB=F, maxRGB=1) 
+
+write_csv(sr_final_polygons, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/sr_final_polygons.csv")
+
+```
+
+```
