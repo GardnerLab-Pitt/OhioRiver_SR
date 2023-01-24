@@ -4,6 +4,8 @@ author: "Sam Sillen"
 date: "2023-01-13"
 output: html_document
 ---
+
+
 packages
 ```{r setup, include=FALSE}
 library(tidyverse)
@@ -78,13 +80,22 @@ holdout <- function(x) {
 # Read in spatial data to filter matchup data to ROI
 ```{r chla}
 # SF for HUC2 basins from USDA NHD WBD - includes Mid Atlantic (HUC2_02), Great Lakes (HUC2_04), Ohio (HUC2_05), Tennessee (HUC2_06) and Upper Mississippi (HUC2_07)
-huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/AlgalBloom_ORB/HUC2_Merge_Shapefile/HUC2_Merge", layer="HUC2_Merge")
+huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/AlgalBloom_ORB/HUC2_Merge_Shapefile/HUC2_Merge", layer="HUC2_Merge") 
 st_transform(huc2_basins, crs ="+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
 
 # Load in LC02 matchup database
-matchup <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/LC02_matchup.feather") %>% 
+matchup <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/LC02_matchup.feather") 
+
+matchup <- matchup %>% 
 filter(harmonized_parameter == 'chl.a') %>% 
 mutate(uniqueID = row_number())
+
+#location_data <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/parametersMunged_corrected_v4.feather") %>% 
+#filter(SiteID %in% matchup$SiteID) %>% 
+#distinct(SiteID, .keep_all = TRUE) %>% 
+#select(SiteID, lat, long)
+
+#matchup <- left_join(matchup, location_data)
 
 pnts <- matchup %>% # Create new df with matchup ID, lat and long columns
   select(uniqueID, long, lat) 
@@ -120,7 +131,7 @@ matchup_filter <- matchup %>%
   filter(sd_Swir1 < 0.003) %>%
   filter(sd_Swir2 < 0.003) %>%
   filter(characteristicName != 'Chlorophyll a, corrected for pheophytin') %>%
-  filter(characteristicName != 'Chlorophyll a, (probe)')
+  filter(characteristicName != 'Chlorophyll a, (probe)') 
 
 #Add new spectral indices for chl-a detection
 matchup_filter$GCI <- matchup_filter$Nir/(matchup_filter$Green-1) #Green Chlorophyll Index
@@ -130,12 +141,11 @@ matchup_filter$KIVU <- (matchup_filter$Blue-matchup_filter$Red)/matchup_filter$G
 matchup_filter$GB <- matchup_filter$Green/matchup_filter$Blue
 matchup_filter$GNDVI <- (matchup_filter$Nir-matchup_filter$Green)/(matchup_filter$Nir+matchup_filter$Green)
 matchup_filter$EVI <- 2.5*((matchup_filter$Nir-matchup_filter$Red)/(matchup_filter$Nir+((6*matchup_filter$Red)-(7.5*matchup_filter$Blue))+1))
-#matchup$KAB <- 1.67-3.94*log(matchup$Blue)+3.78*log(matchup$Red)
-#matchup$KRL <- (((matchup$Blue/matchup$Red)*matchup$Nir)-98)/0.75
-
+matchup_filter$KAB <- 1.67-3.94*log(matchup_filter$Blue)+3.78*log(matchup_filter$Red)
+matchup_filter$KRL <- (((matchup_filter$Blue/matchup_filter$Red)*matchup_filter$Nir)-98)/0.75
 ```
 
-# Settinb up base model (no ffs, hypertuning)
+# Setting up base model (no ffs, hypertuning)
 ```{r}
 
 # make splits for training/validation
@@ -150,7 +160,15 @@ df <- matchup_filter %>%
          ungroup() %>%
          as.data.frame() %>%
   filter_all(all_vars(!is.infinite(.))) %>%
-  filter_all(all_vars(!is.nan(.))) 
+  filter_all(all_vars(!is.nan(.)))
+
+outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/outliers_sum.csv")
+
+outliers <- outliers %>% 
+filter(count > 3)
+
+df <- df %>% 
+filter(!uniqueID %in% outliers$uniqueID)
 
 # training data #80% of data to training 
 train <- df %>%
@@ -180,8 +198,9 @@ val.cols <- df %>%
 
 #Select some spectral indices/bands to use as predictors in model. Consider looking at lit and adding a bunch more that are good for chl-a specifically. 
 features_1 <- df %>%
-  select(NR:gn.gn, GCI, IRG, SABI, KIVU, GB, GNDVI, EVI) %>%
+  select(NR:gn.gn, GCI, IRG, SABI, KIVU, GB, GNDVI, EVI, KAB, KRL, pixel_qa) %>%
   names(.)
+
 
 # create cross validation folds for spatial-temporal cross validation
 folds <- CreateSpacetimeFolds(train, spacevar = "long_group", timevar = "time_group" , k=2)
@@ -195,8 +214,9 @@ train_control_final <- caret::trainControl(
   indexOut = folds$indexOut,
   verboseIter = T,
   allowParallel = TRUE,
-  p = 0.8 #80% of the data is used to predict the other 20%
+  p = 0.9 #90% of the data is used to predict the other 20%
   )
+
 
 # pick some defaut hyperparameters. No hyperparameter tuning yet here
   
@@ -214,7 +234,7 @@ model <- caret::train(
   trControl = train_control_final,
   tuneGrid = grid_final,
   method = "xgbLinear",
- # preProcess = c('center', 'scale'),
+   # preProcess = c('center', 'scale'),
    importance = T,
   verbose = TRUE
 )
@@ -231,7 +251,7 @@ output <- tibble(Predicted = pred, Actual = actual, uniqueID = uniqueID) %>%
   mutate(residual = Actual - Predicted,
          year = year(date),
          month = month(date),
-         obs = ifelse(abs(residual) > 30, "bad", "good"))
+         obs = ifelse(abs(residual) > 15, "bad", "good"))
 
 # calcualate error metrics 
 evals <- output %>%
@@ -244,9 +264,8 @@ evals <- output %>%
             p.bias = percent_bias(Actual, Predicted),
             smape = smape(Actual, Predicted)) 
 evals %>% view()
-
+library(ggpmisc)
 #Initial model had rmse 15 and mae 8 ; now we see rmse of 7.77 and mae of 4.12
-
 # plot validation
 ggplot(output , aes(x = (Actual), y = (Predicted))) + 
   geom_point() +
@@ -255,8 +274,10 @@ ggplot(output , aes(x = (Actual), y = (Predicted))) +
   geom_abline(slope=1, intercept = 0, color = 'black')+
   xlab("Measured  (ug/L)") +
   ylab("Predicted (ug/L)")+
+    stat_poly_eq() +
   theme_few() 
 
+#save.image(plot, "C:/Users/samsi/Desktop/plot.jpeg")
 ```
 
 # FFS for selecting best combination of predictor variables 
@@ -338,7 +359,7 @@ train_control <- caret::trainControl(
   indexOut = folds$indexOut,
   verboseIter = T,
   allowParallel = TRUE,
-  p = 0.8
+  p = 0.9,
   )
   
 base_model <- caret::train(
@@ -363,7 +384,7 @@ train_control_final <- caret::trainControl(
   indexOut = folds$indexOut,
   verboseIter = T,
   allowParallel = TRUE,
-  p = 0.8
+  p = 0.9,
   )
   
 grid_final <- expand.grid(
