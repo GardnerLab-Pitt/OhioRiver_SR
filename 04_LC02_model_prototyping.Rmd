@@ -34,6 +34,8 @@ library(caret)
 library(sp)
 library(xgboost)
 library(Metrics)
+library(parallelly)
+library(doParallel)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -125,17 +127,6 @@ matchup_filter <- matchup %>%
   filter(sd_Swir2 < 0.003) %>%
   filter(characteristicName != 'Chlorophyll a, corrected for pheophytin') %>%
   filter(characteristicName != 'Chlorophyll a, (probe)') 
-
-#Add new spectral indices for chl-a detection
-matchup_filter$GCI <- matchup_filter$Nir/(matchup_filter$Green-1) #Green Chlorophyll Index
-matchup_filter$IRG <- matchup_filter$Red-matchup_filter$Green #Red Green Ratio Index
-matchup_filter$SABI <- (matchup_filter$Nir-matchup_filter$Red)/(matchup_filter$Blue + matchup_filter$Green)
-matchup_filter$KIVU <- (matchup_filter$Blue-matchup_filter$Red)/matchup_filter$Green
-matchup_filter$GB <- matchup_filter$Green/matchup_filter$Blue
-matchup_filter$GNDVI <- (matchup_filter$Nir-matchup_filter$Green)/(matchup_filter$Nir+matchup_filter$Green)
-matchup_filter$EVI <- 2.5*((matchup_filter$Nir-matchup_filter$Red)/(matchup_filter$Nir+((6*matchup_filter$Red)-(7.5*matchup_filter$Blue))+1))
-matchup_filter$KAB <- 1.67-3.94*log(matchup_filter$Blue)+3.78*log(matchup_filter$Red)
-matchup_filter$KRL <- (((matchup_filter$Blue/matchup_filter$Red)*matchup_filter$Nir)-98)/0.75
 ```
 
 # Setting up base model (no ffs, hypertuning)
@@ -297,7 +288,6 @@ tuneGrid1 <- expand.grid(
   lambda = 0,
   alpha = 0)
 
-
 # Set it up to run in parallel. This can take 1-2 days.
 cl <- makePSOCKcluster(availableCores() - 4)
 registerDoParallel(cl)
@@ -310,8 +300,8 @@ registerDoSEQ()
 ffsResults <- ffs$perf_all
 
 # Save the results
-#write_feather(ffsResults, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/ffsResults.feather")
-
+write_feather(ffsResults, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/ffsResults.feather")
+#
 ffsResults %>%
   group_by(nvar) %>%
   summarise(RMSE = median(RMSE),
@@ -328,7 +318,8 @@ ffsResults %>%
 
 ffs_Results <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/ffsResults.feather")
 
-ffs_features <- ffs_Results[ffs_Results$RMSE == min(ffs_Results$RMSE),] %>%
+
+ffs_features <- ffsResults[ffsResults$RMSE == min(ffsResults$RMSE),] %>%
   dplyr::select(-c(nvar, RMSE, SE)) %>%
   paste(.) %>% .[.!= 'NA']
 
