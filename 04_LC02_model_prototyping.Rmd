@@ -126,7 +126,8 @@ matchup_filter <- matchup %>%
   filter(sd_Swir1 < 0.003) %>%
   filter(sd_Swir2 < 0.003) %>%
   filter(characteristicName != 'Chlorophyll a, corrected for pheophytin') %>%
-  filter(characteristicName != 'Chlorophyll a, (probe)') 
+  filter(characteristicName != 'Chlorophyll a, (probe)')
+
 ```
 
 # Setting up base model (no ffs, hypertuning)
@@ -260,7 +261,6 @@ ggplot(output , aes(x = (Actual), y = (Predicted))) +
     stat_poly_eq() +
   theme_few() 
 
-#save.image(plot, "C:/Users/samsi/Desktop/plot.jpeg")
 ```
 
 # FFS for selecting best combination of predictor variables 
