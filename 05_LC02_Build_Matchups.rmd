@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "LC02_Build_Matchups"
 output: github_document
 ---
 
@@ -20,20 +20,17 @@ library(feather)
 
 ```{r}
 
-corr_coef <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/LC02_Corr_Coef.csv") 
+corr_coef <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef.feather") 
 
 correction_coef_99 <- corr_coef %>%
   filter(fit %in% c(NA, "98_quant")) %>%
   dplyr::select(-fit)
 
-sr_clean <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_SR_Clean.csv")
-
+sr_clean <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_SR_Clean.feather")
 ```
 
 ```{r}
-setwd("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS")
-
-in_situ_raw <- read_feather("wqp_lagos_usgs_long_methods.feather")
+in_situ_raw <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/wqp_lagos_usgs_long_methods.feather")
 
 # Now I will create additional environment variables with date fields that have been added to , in order to join via +- 1 day, +- 2 day. So, there will be a variable with date + 1 , date - 1, etc
 
@@ -71,12 +68,14 @@ date_plus_1 <- inner_join(date_plus_1, sr_clean, by = c('SiteID', 'date'))
 date_plus_2 <- inner_join(date_plus_2, sr_clean, by = c('SiteID', 'date'))
 
 #bind them up and apply coefficients
-sr_final <- rbind(date0, date_min_1, date_min_2, date_plus_1, date_plus_2) %>% 
+sr_final <- rbind(date0, date_min_1, date_min_2, date_plus_1, date_plus_2)
+
+sr_final <- sr_final %>% 
   mutate(rn = row_number()) %>%
   mutate(sat = as.character(sat)) %>%
   gather(Red ,Green, Blue, Nir, Swir1, Swir2, key='band', value='value') %>%
   group_by(band, sat) %>%
-  left_join(correction_coef_99, by=c("band", "sat")) %>%
+  left_join(corr_coef, by=c("band", "sat")) %>%
   mutate(value_cor=  coef2*value^ 2 + coef1*value + intercept) %>%
   ungroup() %>%
   mutate(value_cor = ifelse(value_cor <=0, value, value_cor)) %>%
@@ -87,10 +86,46 @@ sr_final <- rbind(date0, date_min_1, date_min_2, date_plus_1, date_plus_2) %>%
            function(x) stringr::str_replace_all(x, "value_", "")) %>%
     rename_at(vars(Red, Green, Blue, Nir, Swir1, Swir2),function(x) paste0(x,"_raw")) %>%
     rename_at(vars(starts_with("cor")),            funs(stringr::str_replace_all(., "cor_", ""))) 
+
+sr_final <- sr_final %>% mutate(uniqueID = row_number())
 ```
 
-# Adding band raitios , color metrics for model predictors 
+# Adding band ratios , color metrics for model predictors 
 ```{r}
+chroma <- function(R, G, B) {
+  require(colorscience)
+  require(tidyverse)
+# Converst R,G, and B spectral reflectance to dominant wavelength based
+# on CIE chromaticity color space
+
+# see Wang et al 2015. MODIS-Based Radiometric Color Extraction and
+# Classification of Inland Water With the Forel-Ule
+# Scale: A Case Study of Lake Taihu
+
+# chromaticity.diagram.color.fill()
+Xi <- 2.7689*R + 1.7517*G + 1.1302*B
+Yi <- 1.0000*R + 4.5907*G + 0.0601*B
+Zi <- 0.0565*G + 5.5943*B
+
+x <-  Xi / (Xi + Yi +  Zi)
+y <-  Yi / (Xi + Yi +  Zi)
+z <-  Zi / (Xi + Yi +  Zi)
+
+# calculate hue angle
+alpha <- atan2( (x - (1/3)), (y - (1/3))) * 180/pi
+
+# make look up table for hue angle to wavelength conversion
+cie <- cccie31 %>%
+  dplyr::mutate(a = atan2( (x - (1/3)), (y - (1/3))) * 180/pi) %>%
+  dplyr::filter(wlnm <= 700) %>%
+  dplyr::filter(wlnm >=380) 
+
+# find nearest dominant wavelength to hue angle
+wl <- cie[as.vector(sapply(alpha,function(x) which.min(abs(x - cie$a)))), 'wlnm']
+
+return(wl)
+}
+
 
 pull_transform <- function(df, maxRGB=1, RGB=F) {
   
@@ -172,17 +207,44 @@ pull_transform <- function(df, maxRGB=1, RGB=F) {
                   ndvi = ((Nir-Red)/(Nir+Red)),
                   ndwi = ((Green- Swir1)/(Green + Swir1)),
                   ndssi = ((Blue - Nir)/ (Blue + Nir)),
-                  gn.gn= ((Green- Nir)/ (Green + Nir)),
-                  hue = rgb2hsv(r=Red, g=Green, b=Blue, maxColorValue = maxRGB)[1,],
-                  saturation = rgb2hsv(r=Red, g=Green,  b=Blue, maxColorValue = maxRGB)[2,],
-                  bright = rgb2hsv(r=Red, g=Green,  b=Blue, maxColorValue = maxRGB)[3,],
-                  bright_tot = (Red + Green + Nir +Blue),
-                  dw = chroma(R=Red, G=Green, B=Blue),
-                  hexcolor = rgb(r=Red, g=Green, b=Blue, maxColorValue = maxRGB)) 
+                  gn.gn= ((Green- Nir)/ (Green + Nir)))
+
+  color <- data %>% filter(Blue > 0 & Green > 0 & Red > 0) %>% 
+    dplyr:: mutate(hue = rgb2hsv(r=Red, g=Green, b=Blue, maxColorValue = maxRGB)[1,],
+            saturation = rgb2hsv(r=Red, g=Green,  b=Blue, maxColorValue = maxRGB)[2,],
+            bright = rgb2hsv(r=Red, g=Green,  b=Blue, maxColorValue = maxRGB)[3,],
+            bright_tot = (Red + Green + Nir +Blue),
+            dw = chroma(R=Red, G=Green, B=Blue),
+            hexcolor = rgb(r=Red, g=Green, b=Blue, maxColorValue = maxRGB))
+
+  color_na <- data %>% filter(!uniqueID %in% color$uniqueID) %>% 
+    dplyr:: mutate(hue = 'NA',
+            saturation = 'NA',
+            bright = 'NA',
+            bright_tot = 'NA',
+            dw = 'NA', 
+            hexcolor = 'NA')
+
+  data <-rbind(color, color_na)
 
   return(data)
 }
 
 sr_final <- pull_transform(sr_final, RGB=F, maxRGB=1) 
 
+```
+
+
+# Lastly add in nhd metrics
+```{r}
+
+nhd_metrics <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/parametersMunged_corrected_v4.feather")
+
+nhd_metrics <- nhd_metrics %>% select(SiteID, type, REACH_meas:TOT_WB5100_ANN, lat, long)
+
+nhd_metrics <-nhd_metrics %>% distinct(SiteID, .keep_all = TRUE)
+
+sr_final <- left_join(sr_final, nhd_metrics, by = 'SiteID')
+
+write_feather(sr_final, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_matchup.feather")
 ```
