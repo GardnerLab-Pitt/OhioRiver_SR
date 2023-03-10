@@ -1,7 +1,7 @@
 ---
 title: "Optical Band Corrections"
 author: "Sam Sillen"
-date: "2022-01-24"
+date: "2022-03-10"
 output: html_document
 ---
 
@@ -28,18 +28,19 @@ library(broom)
 # Prepare SR data for joining with in situ 
 ```{r}
 
-sr_path <- "G:/My Drive/LC02_all_wqp_lagos_sites_SR_pull"
+sr_path <- "G:/My Drive/LC02_matchup_pull"
 
 sr_raw <- list.files(path=sr_path, pattern=".csv", full.names = T) %>%
   map_df(~ fread(., stringsAsFactors = F))
-sr %>% sample_n(size = 100) %>% view()
+
 sr <- sr_raw %>%
-  filter(!is.na(Blue)) %>% # Drop all of rows that have been masked but still have lines due to metadata extraction 
+ # drop_na(Blue) %>% # Drop all of rows that have been masked but still have lines due to metadata extraction , actually not necessary anymore since pull updates
   mutate(date = date / 1000, # Have to convert miliseconds to seconds for following line 
          datetime =  as.POSIXct(date, origin = "1970-01-01", tz = 'UTC'),
          date = as.POSIXct(date, origin = "1970-01-01", tz = 'UTC'),
          date = as_date(date))
-```
+
+  ```
 
 ```{r}
 
@@ -248,6 +249,6 @@ mutate(sat = "LC09")
 corr_coef <- bind_rows(coef_5, coef_7, coef_8, coef_9) %>%
   ungroup()
 
-write_csv(corr_coef, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef.csv") 
-write_csv(sr_clean, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_SR_Clean.csv")
+write_feather(corr_coef, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef.feather") 
+write_feather(sr_clean, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_SR_Clean.feather")
 ```
