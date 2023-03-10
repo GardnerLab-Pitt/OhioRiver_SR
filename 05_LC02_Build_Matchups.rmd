@@ -225,8 +225,10 @@ pull_transform <- function(df, maxRGB=1, RGB=F) {
             dw = 'NA', 
             hexcolor = 'NA')
 
-  data <-rbind(color, color_na)
-
+  data <-rbind(color, color_na) %>%
+  mutate(dw = as.numeric(data$dw)) %>% 
+  mutate(saturation = as.numeric(data$saturdation)) %>% 
+  mutate(hue = as.numeric(data$hue))
   return(data)
 }
 
