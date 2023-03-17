@@ -1,10 +1,9 @@
 ---
 title: "LC02 chl-a model prototyping"
 author: "Sam Sillen"
-date: "2023-01-13"
+date: "2023-03-17"
 output: html_document
 ---
-
 
 packages
 ```{r setup, include=FALSE}
@@ -36,6 +35,7 @@ library(xgboost)
 library(Metrics)
 library(parallelly)
 library(doParallel)
+library(httpgd)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -82,18 +82,21 @@ holdout <- function(x) {
 # Read in spatial data to filter matchup data to ROI
 ```{r chla}
 # SF for HUC2 basins from USDA NHD WBD - includes Mid Atlantic (HUC2_02), Great Lakes (HUC2_04), Ohio (HUC2_05), Tennessee (HUC2_06) and Upper Mississippi (HUC2_07)
-huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/AlgalBloom_ORB/HUC2_Merge_Shapefile/HUC2_Merge", layer="HUC2_Merge") 
+huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/Shapefiles/HUC2_Merge_Shapefile/HUC2_Merge", layer="HUC2_Merge") 
 st_transform(huc2_basins, crs ="+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
 
+huc2_basins <- huc2_basins %>% filter(name != 'Mid Atlantic Region')
+
 # Load in LC02 matchup database
-matchup <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/LC02_matchup.feather") 
+matchup <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_matchup.feather")
 
 matchup <- matchup %>% 
-filter(harmonized_parameter == 'chl.a') %>% 
+filter(harmonized_parameter == 'chl.a')  %>% 
 mutate(uniqueID = row_number())
 
 pnts <- matchup %>% # Create new df with matchup ID, lat and long columns
   select(uniqueID, long, lat) 
+
 sp_pnts = st_as_sf(pnts, coords=c('long', 'lat')) 
 st_crs(sp_pnts)=4326
 sp_pnts = st_transform(sp_pnts, crs=st_crs(huc2_basins)) # Make points spatial and set coordinate system to same as the HUC polygon
@@ -106,50 +109,50 @@ sp_pnts$Intersect=lengths(Int)>0 #Finds only countries where intersection is TRU
 matchup <- cbind(matchup, sp_pnts$Intersect) 
 #Rename newly added column 
 
-colnames(matchup)[116] <- "Intersect"
+matchup <- matchup %>% rename(Intersect = "sp_pnts$Intersect")
 ```
 
 # Applying filters to improve model performance 
 ```{r}
 # Finish cleaning the data by filtering out matchups that are outside of HUC boundaries and other filters
 matchup_filter <- matchup %>%
- # filter(dswe == 1) %>% 
-  #filter(hillShadow ==1 | is.na(hillShadow)) %>%
+rename(value = "raw_value") %>%
+  filter(dswe == 1) %>% 
+  filter(value < 200) %>% 
+  filter(hillShadow ==1 | is.na(hillShadow)) %>%
   filter(value > 0.1) %>% # Minimum accepted chlorophyll value
-  filter(value < 100) %>% # Filtering down to 100 to reduce large residuals, but we might want to increase this 
-  filter(Intersect == TRUE) %>%   # Only select points within HUC boundaries 
-  filter(pCount_dswe1 > 110) %>%
-  filter(sd_Blue < 0.003) %>%
-  filter(sd_Red < 0.003) %>% 
-  filter(sd_Green < 0.003) %>% 
-  filter(sd_Nir < 0.003) %>% 
-  filter(sd_Swir1 < 0.003) %>%
-  filter(sd_Swir2 < 0.003) %>%
+  filter(Intersect == TRUE) %>% 
+  filter(season == 'Summer') %>%
+  filter(pCount_dswe1 > 30) %>%
   filter(characteristicName != 'Chlorophyll a, corrected for pheophytin') %>%
-  filter(characteristicName != 'Chlorophyll a, (probe)')
+  filter(Surface_temp_kelvin > 270) %>%
+  select(date:gn.gn, lat, long, uniqueID, hue, dw, saturation)
 
 ```
 
 # Setting up base model (no ffs, hypertuning)
 ```{r}
+
 # make splits for training/validation
+
 df <- matchup_filter %>%
   mutate(lat_group = cut_number(lat, 2, right= F),
          long_group = cut_number(long, 2, right=F),
          date = lubridate::ymd(date),
          julian = as.numeric(julian.Date(date)),
          space_group = paste0(lat_group,long_group),
-         time_group = cut_number(julian, 3, right=F)) %>%
+         time_group = cut_number(julian, 3, right=F),
+         value = log(value)) %>%
          holdout() %>% 
          ungroup() %>%
          as.data.frame() %>%
   filter_all(all_vars(!is.infinite(.))) %>%
   filter_all(all_vars(!is.nan(.)))
 
-outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/outliers_sum.csv") # from outlier test 
+outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/outlier_raw_90_noMidAtl_100rounds_percentile.csv") # from outlier test 
 
 outliers <- outliers %>% 
-filter(count > 3)
+filter(count > 5)
 
 df <- df %>% 
 filter(!uniqueID %in% outliers$uniqueID)
@@ -178,16 +181,13 @@ val.cols <- df %>%
   filter_all(all_vars(!is.infinite(.))) %>%
   filter_all(all_vars(!is.nan(.))) 
 
-
-
 #Select some spectral indices/bands to use as predictors in model. Consider looking at lit and adding a bunch more that are good for chl-a specifically. 
 features_1 <- df %>%
-  select(NR:gn.gn, GCI, IRG, SABI, KIVU, GB, GNDVI, EVI, KAB, KRL, pixel_qa) %>%
+  select(NR:gn.gn, GCI, IRG, SABI, KIVU, GB, GNDVI, EVI, KAB, KRL, Surface_temp_kelvin, dw, hue, saturation) %>%
   names(.)
 
-
 # create cross validation folds for spatial-temporal cross validation
-folds <- CreateSpacetimeFolds(train, spacevar = "long_group", timevar = "time_group" , k=2)
+folds <- CreateSpacetimeFolds(train, spacevar = "long_group", timevar = "time_group")
 
 # set training parameters
 train_control_final <- caret::trainControl(
@@ -210,19 +210,19 @@ grid_final <-expand.grid(
   lambda =1,
   eta = 0.3
 )
-
+test <- train[,features_1]
 # make a model
 model <- caret::train(
   x = train[,features_1],
   y = train$value,
   trControl = train_control_final,
-  tuneGrid = grid_final,
+  tuneLength = 1, 
+ # tuneGrid = grid_final,
   method = "xgbLinear",
    # preProcess = c('center', 'scale'),
    importance = T,
   verbose = TRUE
 )
-
 
 # use model to make predictions over validation data
 pred<- predict(model, validate[,features_1])
@@ -230,12 +230,13 @@ actual <- (validate$value)
 uniqueID <- val.cols$uniqueID
 
 output <- tibble(Predicted = pred, Actual = actual, uniqueID = uniqueID) %>%
-  mutate(Actual = (Actual), Predicted =  (Predicted)) %>%
+  mutate(Actual = exp(Actual), Predicted =  exp(Predicted)) %>%
   left_join(df, by="uniqueID") %>%
   mutate(residual = Actual - Predicted,
          year = year(date),
          month = month(date),
          obs = ifelse(abs(residual) > 15, "bad", "good"))
+
 
 # calcualate error metrics 
 evals <- output %>%
@@ -248,19 +249,23 @@ evals <- output %>%
             p.bias = percent_bias(Actual, Predicted),
             smape = smape(Actual, Predicted)) 
 evals %>% view()
+
+kbl(evals, caption="Table") %>%
+kable_classic(full_width = T) %>% 
+save_kable("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Plots/my_latex_table.png")
+
 library(ggpmisc)
-#Initial model had rmse 15 and mae 8 ; now we see rmse of 7.77 and mae of 4.12
-# plot validation
+
 ggplot(output , aes(x = (Actual), y = (Predicted))) + 
   geom_point() +
-  xlim(0, 100) +
-  ylim(0, 100) +
+  xlim(0, 200) +
+  ylim(0, 200) +
   geom_abline(slope=1, intercept = 0, color = 'black')+
   xlab("Measured  (ug/L)") +
   ylab("Predicted (ug/L)")+
-    stat_poly_eq() +
+  labs(subtitle = "AOI filter contains removing Mid-Atlantic Region",title = 'Base Model (< 200 ug/L), AOI Filter + outlier removal (90th percentile)')+
+  stat_poly_eq() +
   theme_few() 
-
 ```
 
 # FFS for selecting best combination of predictor variables 
@@ -270,8 +275,7 @@ set.seed(10)
 
 folds <- CreateSpacetimeFolds(train,
   spacevar = "long_group",
-  timevar = "time_group" ,
-  k = 2)
+  timevar = "time_group" )
   
 control <- trainControl(
   method = "cv",
@@ -295,12 +299,11 @@ registerDoParallel(cl)
 ffs <- ffs(df[,features_1], df$value, method = 'xgbLinear', metric = 'RMSE', tuneGrid = tuneGrid1, Control = control, verbose = T)
 
 on.exit(stopCluster(cl))
-registerDoSEQ()
 
 ffsResults <- ffs$perf_all
 
 # Save the results
-write_feather(ffsResults, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/ffsResults.feather")
+write_feather(ffsResults, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/ffs_results__AOI_filter_outlier_raw_90_percentile.feather")
 #
 ffsResults %>%
   group_by(nvar) %>%
@@ -315,13 +318,21 @@ ffsResults %>%
 
 # Hyperparamter tuning 
 ```{r}
+#Sometimes I have to run this unregister doparallel function, because I get an error about an invalid connection due to a lingering parallel operation
+#unregister_dopar <- function() {
+#  env <- foreach:::.foreachGlobals
+#  rm(list=ls(name=env), pos=env)
+#}
 
-ffs_Results <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/ffsResults.feather")
+#unregister_dopar()
 
+#ffsResults <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/ffsResults_20230305.feather")
 
 ffs_features <- ffsResults[ffsResults$RMSE == min(ffsResults$RMSE),] %>%
   dplyr::select(-c(nvar, RMSE, SE)) %>%
-  paste(.) %>% .[.!= 'NA']
+  slice_head(n = 1) %>%
+  select(-var11) %>% 
+  paste(.)
 
 grid_base <- expand.grid(
   nrounds = seq(100,500,100),
@@ -332,15 +343,14 @@ grid_base <- expand.grid(
 
 set.seed(10)
 
-folds <- CreateSpacetimeFolds(train, spacevar = "long_group", timevar = "time_group" , k=2)
+folds <- CreateSpacetimeFolds(train, spacevar = "long_group", timevar = "time_group" , k=5)
 
 train_control <- caret::trainControl(
   method = "cv",
-  savePredictions = F,
+  savePredictions = T,
   returnResamp = 'final',
   index = folds$index,
   indexOut = folds$indexOut,
-  verboseIter = T,
   allowParallel = TRUE,
   p = 0.9,
   )
@@ -365,7 +375,6 @@ train_control_final <- caret::trainControl(
   returnResamp = 'final',
   index = folds$index,
   indexOut = folds$indexOut,
-  verboseIter = T,
   allowParallel = TRUE,
   p = 0.9,
   )
@@ -384,8 +393,7 @@ model <- caret::train(
   tuneGrid = grid_final,
   method = "xgbLinear",
  # preProcess = c('center', 'scale'),
-  importance = T,
-  verbose = TRUE
+  importance = F
 )
 
 ```
@@ -399,7 +407,7 @@ uniqueID <- val.cols$uniqueID
 
 
 output <- tibble(Predicted = pred, Actual = actual,uniqueID = uniqueID) %>%
-  mutate(Actual = (Actual), Predicted = (Predicted)) %>%
+  mutate(Actual = exp(Actual), Predicted = exp(Predicted)) %>%
   left_join(df, by="uniqueID") %>%
   mutate(residual = Actual - Predicted,
          year = year(date),
@@ -418,5 +426,15 @@ evals <- output %>%
             smape = smape(Actual, Predicted)) 
 
 evals %>% view()
-```
 
+tuneplot <- function(x, probs = .90) {
+  ggplot(x) +
+    coord_cartesian(ylim = c(quantile(x$results$RMSE, probs = probs), min(x$results$RMSE))) +
+    theme_bw()
+}
+tuneplot(model)
+
+save(model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_AOI_filter_90th_percentile.rds")
+
+
+```
