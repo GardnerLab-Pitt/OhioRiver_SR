@@ -36,6 +36,8 @@ library(Metrics)
 library(parallelly)
 library(doParallel)
 library(httpgd)
+library(ggpmisc)
+
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -76,7 +78,6 @@ holdout <- function(x) {
     
   return(out)
 }
-
 ```
 
 # Read in spatial data to filter matchup data to ROI
@@ -85,7 +86,7 @@ holdout <- function(x) {
 huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/Shapefiles/HUC2_Merge_Shapefile/HUC2_Merge", layer="HUC2_Merge") 
 st_transform(huc2_basins, crs ="+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
 
-huc2_basins <- huc2_basins %>% filter(name != 'Mid Atlantic Region')
+huc2_basins <- huc2_basins %>% filter(name == 'Mid Atlantic Region')
 
 # Load in LC02 matchup database
 matchup <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_matchup.feather")
@@ -128,11 +129,13 @@ rename(value = "raw_value") %>%
   filter(Surface_temp_kelvin > 270) %>%
   select(date:gn.gn, lat, long, uniqueID, hue, dw, saturation)
 
+matchup_filter$dw <- as.numeric(matchup_filter$dw)
+matchup_filter$hue <- as.numeric(matchup_filter$hue)
+matchup_filter$saturation <- as.numeric(matchup_filter$saturation)
 ```
 
 # Setting up base model (no ffs, hypertuning)
 ```{r}
-
 # make splits for training/validation
 
 df <- matchup_filter %>%
@@ -149,7 +152,7 @@ df <- matchup_filter %>%
   filter_all(all_vars(!is.infinite(.))) %>%
   filter_all(all_vars(!is.nan(.)))
 
-outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/outlier_raw_90_noMidAtl_100rounds_percentile.csv") # from outlier test 
+outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/.csv") # from outlier test 
 
 outliers <- outliers %>% 
 filter(count > 5)
@@ -166,7 +169,7 @@ train <- df %>%
   filter_all(all_vars(!is.nan(.))) 
 
 
-# validation data $20% of data to validation
+# validation data 10% of data to validation
 validate <- df %>%
   filter(.partitions ==2) %>%
   ungroup() %>%
@@ -187,7 +190,7 @@ features_1 <- df %>%
   names(.)
 
 # create cross validation folds for spatial-temporal cross validation
-folds <- CreateSpacetimeFolds(train, spacevar = "long_group", timevar = "time_group")
+folds <- CreateSpacetimeFolds(train, spacevar = "long_group", timevar = "time_group", k = 2)
 
 # set training parameters
 train_control_final <- caret::trainControl(
@@ -210,7 +213,6 @@ grid_final <-expand.grid(
   lambda =1,
   eta = 0.3
 )
-test <- train[,features_1]
 # make a model
 model <- caret::train(
   x = train[,features_1],
@@ -247,14 +249,7 @@ evals <- output %>%
             mape = mape(Actual, Predicted),
             bias = bias(Actual, Predicted),
             p.bias = percent_bias(Actual, Predicted),
-            smape = smape(Actual, Predicted)) 
-evals %>% view()
-
-kbl(evals, caption="Table") %>%
-kable_classic(full_width = T) %>% 
-save_kable("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Plots/my_latex_table.png")
-
-library(ggpmisc)
+            smape = smape(Actual, Predicted)) %>% view()
 
 ggplot(output , aes(x = (Actual), y = (Predicted))) + 
   geom_point() +
@@ -263,14 +258,13 @@ ggplot(output , aes(x = (Actual), y = (Predicted))) +
   geom_abline(slope=1, intercept = 0, color = 'black')+
   xlab("Measured  (ug/L)") +
   ylab("Predicted (ug/L)")+
-  labs(subtitle = "AOI filter contains removing Mid-Atlantic Region",title = 'Base Model (< 200 ug/L), AOI Filter + outlier removal (90th percentile)')+
+  labs(subtitle = "No AOI filter, no outlier detection, (< 200 ug / L )",title = 'Base Model')+
   stat_poly_eq() +
   theme_few() 
 ```
 
 # FFS for selecting best combination of predictor variables 
 ```{r}
-
 set.seed(10)
 
 folds <- CreateSpacetimeFolds(train,
@@ -313,12 +307,12 @@ ffsResults %>%
   geom_errorbar(aes(x = nvar, ymin = RMSE - SE, ymax = RMSE + SE), color = 'red')
 
 #ggsave(paste0('figs/rfeRMSE_', iter, '.png'), device = 'png', width = 6, height = 4, units = 'in')
-
 ```
 
 # Hyperparamter tuning 
 ```{r}
 #Sometimes I have to run this unregister doparallel function, because I get an error about an invalid connection due to a lingering parallel operation
+
 #unregister_dopar <- function() {
 #  env <- foreach:::.foreachGlobals
 #  rm(list=ls(name=env), pos=env)
@@ -326,7 +320,7 @@ ffsResults %>%
 
 #unregister_dopar()
 
-#ffsResults <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_RS/ffsResults_20230305.feather")
+ffsResults <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/ffs_results__AOI_filter_outlier_raw_90_percentile.feather")
 
 ffs_features <- ffsResults[ffsResults$RMSE == min(ffsResults$RMSE),] %>%
   dplyr::select(-c(nvar, RMSE, SE)) %>%
@@ -367,8 +361,7 @@ base_model <- caret::train(
 )
 
 base_model$bestTune
-
-# 
+ 
 train_control_final <- caret::trainControl(
   method = "cv",
   savePredictions = T,
@@ -395,16 +388,13 @@ model <- caret::train(
  # preProcess = c('center', 'scale'),
   importance = F
 )
-
 ```
-
+# Evaluate final model
 ```{r eval}
-
 # evaulate the model
 pred<- predict(model, validate[,ffs_features])
 actual <- (validate$value)
 uniqueID <- val.cols$uniqueID
-
 
 output <- tibble(Predicted = pred, Actual = actual,uniqueID = uniqueID) %>%
   mutate(Actual = exp(Actual), Predicted = exp(Predicted)) %>%
@@ -423,18 +413,39 @@ evals <- output %>%
             mape = mape(Actual, Predicted),
             bias = bias(Actual, Predicted),
             p.bias = percent_bias(Actual, Predicted),
-            smape = smape(Actual, Predicted)) 
-
-evals %>% view()
-
-tuneplot <- function(x, probs = .90) {
-  ggplot(x) +
-    coord_cartesian(ylim = c(quantile(x$results$RMSE, probs = probs), min(x$results$RMSE))) +
-    theme_bw()
-}
-tuneplot(model)
+            smape = smape(Actual, Predicted)) %>% view()
 
 save(model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_AOI_filter_90th_percentile.rds")
+```
+
+# Read in prediction data, calculate AOA (prototyping at the moment), then predict 
+```{r}
+load( "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_AOI_filter_90th_percentile.rds")
+
+aoa <- aoa(model = model, newdata = matchup_filter)
+
+aoa_df <- as.data.frame(aoa$DI) %>% mutate(uniqueID = row_number())
 
 
+new_data <- matchup_filter %>% 
+mutate(uniqueID2 = row_number())
+
+
+new_data <- new_data %>% 
+filter(uniqueID2 %in% aoa_df$uniqueID)
+
+new_data$pred <- predict(model, new_data[,ffs_features])
+
+new_data$pred <- exp(new_data$pred)
+
+ggplot(new_data , aes(x = (value), y = (pred))) + 
+  geom_point() +
+  xlim(0, 200) +
+  ylim(0, 200) +
+  geom_abline(slope=1, intercept = 0, color = 'black')+
+  xlab("Measured  (ug/L)") +
+  ylab("Predicted (ug/L)")+
+  labs(subtitle = "No AOI filter, no outlier detection, (< 200 ug / L )",title = 'Base Model')+
+  stat_poly_eq() +
+  theme_few() 
 ```
