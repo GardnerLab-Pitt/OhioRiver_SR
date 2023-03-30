@@ -83,10 +83,10 @@ holdout <- function(x) {
 # Read in spatial data to filter matchup data to ROI
 ```{r chla}
 # SF for HUC2 basins from USDA NHD WBD - includes Mid Atlantic (HUC2_02), Great Lakes (HUC2_04), Ohio (HUC2_05), Tennessee (HUC2_06) and Upper Mississippi (HUC2_07)
-huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/Shapefiles/HUC2_Merge_Shapefile/HUC2_Merge", layer="HUC2_Merge") 
+huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/HUC2_Merge", layer="HUC2_Merge") 
 st_transform(huc2_basins, crs ="+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
 
-huc2_basins <- huc2_basins %>% filter(name == 'Mid Atlantic Region')
+huc2_basins <- huc2_basins %>% filter(name != 'Mid Atlantic Region')
 
 # Load in LC02 matchup database
 matchup <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_matchup.feather")
@@ -123,15 +123,16 @@ rename(value = "raw_value") %>%
   filter(hillShadow ==1 | is.na(hillShadow)) %>%
   filter(value > 0.1) %>% # Minimum accepted chlorophyll value
   filter(Intersect == TRUE) %>% 
-  filter(season == 'Summer') %>%
-  filter(pCount_dswe1 > 30) %>%
+  filter(season == 'Summer') %>% 
+  filter(pCount_dswe1 > 30) %>% 
   filter(characteristicName != 'Chlorophyll a, corrected for pheophytin') %>%
   filter(Surface_temp_kelvin > 270) %>%
   select(date:gn.gn, lat, long, uniqueID, hue, dw, saturation)
 
-matchup_filter$dw <- as.numeric(matchup_filter$dw)
 matchup_filter$hue <- as.numeric(matchup_filter$hue)
+matchup_filter$dw <- as.numeric(matchup_filter$dw)
 matchup_filter$saturation <- as.numeric(matchup_filter$saturation)
+
 ```
 
 # Setting up base model (no ffs, hypertuning)
@@ -144,21 +145,18 @@ df <- matchup_filter %>%
          date = lubridate::ymd(date),
          julian = as.numeric(julian.Date(date)),
          space_group = paste0(lat_group,long_group),
-         time_group = cut_number(julian, 3, right=F),
-         value = log(value)) %>%
+         time_group = cut_number(julian, 3, right=F)) %>%
+        # value = log(value)) %>%
          holdout() %>% 
          ungroup() %>%
          as.data.frame() %>%
   filter_all(all_vars(!is.infinite(.))) %>%
   filter_all(all_vars(!is.nan(.)))
 
-outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/.csv") # from outlier test 
-
-outliers <- outliers %>% 
+outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/outlier_raw_90_noMidAtl_100rounds_percentile.csv") %>% #from outlier test
 filter(count > 5)
 
-df <- df %>% 
-filter(!uniqueID %in% outliers$uniqueID)
+df <- df %>% filter(!uniqueID %in% outliers$uniqueID)
 
 # training data #80% of data to training 
 train <- df %>%
@@ -232,7 +230,7 @@ actual <- (validate$value)
 uniqueID <- val.cols$uniqueID
 
 output <- tibble(Predicted = pred, Actual = actual, uniqueID = uniqueID) %>%
-  mutate(Actual = exp(Actual), Predicted =  exp(Predicted)) %>%
+  mutate(Actual = (Actual), Predicted =  (Predicted)) %>%
   left_join(df, by="uniqueID") %>%
   mutate(residual = Actual - Predicted,
          year = year(date),
@@ -415,6 +413,17 @@ evals <- output %>%
             p.bias = percent_bias(Actual, Predicted),
             smape = smape(Actual, Predicted)) %>% view()
 
+ggplot(output , aes(x = (Actual), y = (Predicted))) + 
+  geom_point() +
+  xlim(0, 200) +
+  ylim(0, 200) +
+  geom_abline(slope=1, intercept = 0, color = 'black')+
+  xlab("Measured  (ug/L)") +
+  ylab("Predicted (ug/L)")+
+  labs(subtitle = "AOI filter, outlier detection, (< 200 ug/L)",title = 'FFS, hypertuned model')+
+  stat_poly_eq() +
+  theme_few() 
+
 save(model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_AOI_filter_90th_percentile.rds")
 ```
 
@@ -422,30 +431,141 @@ save(model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver
 ```{r}
 load( "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_AOI_filter_90th_percentile.rds")
 
-aoa <- aoa(model = model, newdata = matchup_filter)
+# Our model can can only be applied to new data if these are similar to the training data.
+# Because we have implemented this outlier code, I feel as if our prediction data will 
+# not be the same as our training data, and our model evaluation results will be over - 
+# optimistic in regards to it's ability to predict on new data. 
 
-aoa_df <- as.data.frame(aoa$DI) %>% mutate(uniqueID = row_number())
+# My goal, is to figure out a way to make the prediction data similar in 'data space' to
+# the data that has been filtered using the outlier detection method. 
+
+# Here, I try the area of applicability method (https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.13650)
+
+# However, it looks as if it isn't necessarily working as it should ; not a lot of points 
+# are outside the aoa , and thus the evaluation of this new data still looks far worse when
+# compared to the model evaluation results 
+
+trainDI <- trainDI(model, df)
+
+aoa <- aoa(new_data, model, trainDI = trainDI, variables = 'all', method = 'MD')
+  
+# the aoa is in an 'aoa' object, so you have to turn it into a matrix then a df 
+
+aoa.df <-as.data.frame(as.matrix(aoa$DI)) %>% 
+mutate(rowID = row_number())
+
+new_data_aoa <- new_data %>% mutate(rowID = row_number()) %>% 
+mutate(pred = predict(model, new_data[,ffs_features])) %>% 
+left_join(aoa.df) %>% 
+filter(V1 < 1) 
+
+evals <- new_data_aoa %>%
+  mutate(Actual = (value), 
+         Predicted = (pred)) %>%
+  summarise(rmse = rmse(Actual, Predicted),
+            mae = mae(Actual, Predicted),
+            mape = mape(Actual, Predicted),
+            bias = bias(Actual, Predicted),
+            p.bias = percent_bias(Actual, Predicted),
+            smape = smape(Actual, Predicted)) %>% view()
 
 
-new_data <- matchup_filter %>% 
-mutate(uniqueID2 = row_number())
-
-
-new_data <- new_data %>% 
-filter(uniqueID2 %in% aoa_df$uniqueID)
-
-new_data$pred <- predict(model, new_data[,ffs_features])
-
-new_data$pred <- exp(new_data$pred)
-
-ggplot(new_data , aes(x = (value), y = (pred))) + 
+ffs_evals <- ggplot(output , aes(x = (Actual), y = (Predicted))) + 
   geom_point() +
   xlim(0, 200) +
   ylim(0, 200) +
   geom_abline(slope=1, intercept = 0, color = 'black')+
   xlab("Measured  (ug/L)") +
   ylab("Predicted (ug/L)")+
-  labs(subtitle = "No AOI filter, no outlier detection, (< 200 ug / L )",title = 'Base Model')+
+  labs(subtitle = "No Mid - Atlantic Observations, Hypertuned model and FFS applied",title = 'FInal Model Evaluation')+
   stat_poly_eq() +
   theme_few() 
+
+new_data_aoa2  %>% distinct(date, SiteID, value, .keep_all = TRUE)
+
+aoa_evals <- ggplot(new_data_aoa , aes(x = (value), y = (pred))) + 
+  geom_point() +
+  xlim(0, 200) +
+  ylim(0, 200) +
+  geom_abline(slope=1, intercept = 0, color = 'black')+
+  xlab("Measured  (ug/L)") +
+  ylab("Predicted (ug/L)")+
+  labs(subtitle = "Ohio Data (new data)",title = 'AOA Model Evaluation')+
+  stat_poly_eq() +
+  theme_few() 
+
+ggarrange(ffs_evals, aoa_evals)
 ```
+
+# Testing other methods to create 'area of applicability'
+```{r}
+
+# Basically what I need to do is make the model results look similar to model results with a new 
+# data set. 
+
+# The AOA didn't seem to work. I wonder if there is a way to apply the filters from the outlier 
+# detection method to the new data. 
+
+# For example. if the training feature is similar in data space to the data that was REMOVED with 
+# the outlier removal method, then throw that data out from the new data (prediction data )
+
+#########
+
+# load in outliers 
+
+outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/outlier_raw_90_noMidAtl_100rounds_percentile.csv") %>% 
+filter(count > 5)
+
+# proprotional similarity index method 
+
+training <- df[,ffs_features]
+
+new_data_ffs <- new_data[ffs_features]
+
+ggplot(outlier_data, aes(x=R.BS))+
+  geom_histogram(color="darkblue", fill="lightblue")
+
+
+ggplot(df, aes(x=R.BS))+
+  geom_histogram(color="darkblue", fill="lightblue")
+
+# Just spit balling here, but I'm thinking, can you do something where it's like ok , the distribution
+# of a training feature in the new data has to be distributed the same way as the feature in the 
+# training data. Or something like, ok here is the mean, std deviation of a feature in the training
+# data. The feature in the new data has to be within 2 standard deviations of the mean of the training
+# data. 
+
+training <- training %>% 
+pivot_longer(cols = c("R.BS", "B.GN", "GR2", "SN", "G.BS", "Surface_temp_kelvin", 
+"N.RG", "IRG", "N_R", "B.GS"), values_to = 'value', names_to = 'Predictor') %>% 
+group_by(Predictor) %>% 
+summarise(mean = mean(value), stdev = sd(value)) %>% 
+mutate(range_min = (mean) - ((stdev)*2), range_max = (mean) + ((stdev)*2))
+
+new_data <- new_data %>% 
+filter(R.BS >= 0.2668 & R.BS <=1.0092) %>% 
+filter(B.GN >= 0.0936 & B.GN <= 0.7759) %>% 
+filter(GR2 >= -0.0034 & GR2 <= 0.0576) %>% 
+filter(SN >= -25.0073 & SN <= 25.9097) %>% 
+filter(G.BS >= 0.3982 & G.BS <= 1.3877) %>% 
+filter(Surface_temp_kelvin >= 289.6866 & Surface_temp_kelvin <= 303.1723) %>% 
+filter(N.RG >= 0.1979 & N.RG <= 1.0546) %>% 
+filter(IRG >=-0.0229 & IRG <= 0.001) %>% 
+filter(N_R >= -0.0113 & N_R <= 0.0318) %>% 
+filter(B.GS >= 0.2668 & B.GS <= 1.0092)
+
+new_data$pred <- predict(model, new_data[,ffs_features])
+
+aoa_evals <- ggplot(new_data , aes(x = (value), y = (pred))) + 
+  geom_point() +
+  xlim(0, 200) +
+  ylim(0, 200) +
+  geom_abline(slope=1, intercept = 0, color = 'black')+
+  xlab("Measured  (ug/L)") +
+  ylab("Predicted (ug/L)")+
+  labs(subtitle = "Ohio Data (new data)",title = 'AOA Model Evaluation')+
+  stat_poly_eq() +
+  theme_few() 
+
+```
+
