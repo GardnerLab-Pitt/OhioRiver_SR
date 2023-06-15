@@ -1,7 +1,7 @@
 ---
 title: "LC02 chl-a model prototyping"
 author: "Sam Sillen"
-date: "2023-03-17"
+date: "2023-06-12"
 output: html_document
 ---
 
@@ -65,7 +65,7 @@ holdout <- function(x) {
   
   train <- x %>%
   group_by(time_group, long_group, mag) %>%
-  sample_frac(.9) %>% #90% of data will be used for training
+  sample_frac(.8) %>% #80% of data will be used for training
   ungroup() %>%
   dplyr::mutate(.partitions = 1)
   
@@ -83,10 +83,10 @@ holdout <- function(x) {
 # Read in spatial data to filter matchup data to ROI
 ```{r chla}
 # SF for HUC2 basins from USDA NHD WBD - includes Mid Atlantic (HUC2_02), Great Lakes (HUC2_04), Ohio (HUC2_05), Tennessee (HUC2_06) and Upper Mississippi (HUC2_07)
-huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/Shapefiles/HUC2_Merge_Shapefile/HUC2_Merge", layer="HUC2_Merge") 
+huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/HUC2_Merge", layer="HUC2_Merge") 
 st_transform(huc2_basins, crs ="+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
 
-huc2_basins <- huc2_basins %>% filter(name == 'Mid Atlantic Region')
+huc2_basins <- huc2_basins %>% filter(name != 'Mid Atlantic Region')
 
 # Load in LC02 matchup database
 matchup <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_matchup.feather")
@@ -123,15 +123,15 @@ rename(value = "raw_value") %>%
   filter(hillShadow ==1 | is.na(hillShadow)) %>%
   filter(value > 0.1) %>% # Minimum accepted chlorophyll value
   filter(Intersect == TRUE) %>% 
-  filter(season == 'Summer') %>%
-  filter(pCount_dswe1 > 30) %>%
+  filter(pCount_dswe1 > 30) %>% 
   filter(characteristicName != 'Chlorophyll a, corrected for pheophytin') %>%
   filter(Surface_temp_kelvin > 270) %>%
-  select(date:gn.gn, lat, long, uniqueID, hue, dw, saturation)
+  select(date:gn.gn, lat, long, uniqueID, hue, dw, saturation, type, SiteID) # select only the important vars, otherwise calling the holdout function will produce an error
 
 matchup_filter$dw <- as.numeric(matchup_filter$dw)
 matchup_filter$hue <- as.numeric(matchup_filter$hue)
 matchup_filter$saturation <- as.numeric(matchup_filter$saturation)
+
 ```
 
 # Setting up base model (no ffs, hypertuning)
@@ -144,21 +144,20 @@ df <- matchup_filter %>%
          date = lubridate::ymd(date),
          julian = as.numeric(julian.Date(date)),
          space_group = paste0(lat_group,long_group),
-         time_group = cut_number(julian, 3, right=F),
-         value = log(value)) %>%
+         time_group = cut_number(julian, 3, right=F)) %>%
+         #value = log(value)) %>%
          holdout() %>% 
          ungroup() %>%
          as.data.frame() %>%
   filter_all(all_vars(!is.infinite(.))) %>%
   filter_all(all_vars(!is.nan(.)))
 
-outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/.csv") # from outlier test 
+# Read outlier file in , filter df to remove outliers 
 
-outliers <- outliers %>% 
-filter(count > 5)
+#outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/outlier_raw_90_noMidAtl_all_seasons_100rounds_percentile.csv") %>% #from outlier test
+#filter(count > 5)
 
-df <- df %>% 
-filter(!uniqueID %in% outliers$uniqueID)
+#df <- df %>% filter(!uniqueID %in% outliers$uniqueID)
 
 # training data #80% of data to training 
 train <- df %>%
@@ -176,6 +175,7 @@ validate <- df %>%
   as.data.frame()%>%
   filter_all(all_vars(!is.infinite(.))) %>%
   filter_all(all_vars(!is.nan(.))) 
+
 
 # make validation row index so you can rejoin later
 val.cols <- df %>% 
@@ -201,11 +201,8 @@ train_control_final <- caret::trainControl(
   indexOut = folds$indexOut,
   verboseIter = T,
   allowParallel = TRUE,
-  p = 0.9 #90% of the data is used to predict the other 20%
+  p = 0.8 #90% of the data is used to predict the other 10%
   )
-
-
-# pick some defaut hyperparameters. No hyperparameter tuning yet here
   
 grid_final <-expand.grid(
   nrounds = 50,
@@ -213,15 +210,14 @@ grid_final <-expand.grid(
   lambda =1,
   eta = 0.3
 )
+
 # make a model
 model <- caret::train(
   x = train[,features_1],
   y = train$value,
   trControl = train_control_final,
   tuneLength = 1, 
- # tuneGrid = grid_final,
   method = "xgbLinear",
-   # preProcess = c('center', 'scale'),
    importance = T,
   verbose = TRUE
 )
@@ -232,13 +228,12 @@ actual <- (validate$value)
 uniqueID <- val.cols$uniqueID
 
 output <- tibble(Predicted = pred, Actual = actual, uniqueID = uniqueID) %>%
-  mutate(Actual = exp(Actual), Predicted =  exp(Predicted)) %>%
+  mutate(Actual = (Actual), Predicted =  (Predicted)) %>%
   left_join(df, by="uniqueID") %>%
   mutate(residual = Actual - Predicted,
          year = year(date),
          month = month(date),
          obs = ifelse(abs(residual) > 15, "bad", "good"))
-
 
 # calcualate error metrics 
 evals <- output %>%
@@ -258,9 +253,11 @@ ggplot(output , aes(x = (Actual), y = (Predicted))) +
   geom_abline(slope=1, intercept = 0, color = 'black')+
   xlab("Measured  (ug/L)") +
   ylab("Predicted (ug/L)")+
-  labs(subtitle = "No AOI filter, no outlier detection, (< 200 ug / L )",title = 'Base Model')+
+  labs(title = 'Base Model')+
   stat_poly_eq() +
   theme_few() 
+
+#ggsave("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Plots/ModelResults/BaseModel.tiff", width=8, height =6, units="in", dpi=330)
 ```
 
 # FFS for selecting best combination of predictor variables 
@@ -279,7 +276,7 @@ control <- trainControl(
   indexOut = folds$indexOut,
   p = 0.8)
   
-  ## Do initial feature selection with conservative hyperparameters
+# Do initial feature selection with conservative hyperparameters
 tuneGrid1 <- expand.grid(
   nrounds = 300,
   eta = .1,
@@ -323,6 +320,7 @@ ffsResults %>%
 ffsResults <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/ffs_results__AOI_filter_outlier_raw_90_percentile.feather")
 
 ffs_features <- ffsResults[ffsResults$RMSE == min(ffsResults$RMSE),] %>%
+drop_na() %>%
   dplyr::select(-c(nvar, RMSE, SE)) %>%
   slice_head(n = 1) %>%
   select(-var11) %>% 
@@ -379,7 +377,7 @@ grid_final <- expand.grid(
   eta = base_model$bestTune$eta
 )
 
-model <- caret::train(
+final_model <- caret::train(
   x = train[,ffs_features],
   y = train$value,
   trControl = train_control_final,
@@ -389,10 +387,11 @@ model <- caret::train(
   importance = F
 )
 ```
+
 # Evaluate final model
 ```{r eval}
 # evaulate the model
-pred<- predict(model, validate[,ffs_features])
+pred<- predict(final_model, validate[,ffs_features])
 actual <- (validate$value)
 uniqueID <- val.cols$uniqueID
 
@@ -415,37 +414,67 @@ evals <- output %>%
             p.bias = percent_bias(Actual, Predicted),
             smape = smape(Actual, Predicted)) %>% view()
 
-save(model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_AOI_filter_90th_percentile.rds")
-```
-
-# Read in prediction data, calculate AOA (prototyping at the moment), then predict 
-```{r}
-load( "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_AOI_filter_90th_percentile.rds")
-
-aoa <- aoa(model = model, newdata = matchup_filter)
-
-aoa_df <- as.data.frame(aoa$DI) %>% mutate(uniqueID = row_number())
-
-
-new_data <- matchup_filter %>% 
-mutate(uniqueID2 = row_number())
-
-
-new_data <- new_data %>% 
-filter(uniqueID2 %in% aoa_df$uniqueID)
-
-new_data$pred <- predict(model, new_data[,ffs_features])
-
-new_data$pred <- exp(new_data$pred)
-
-ggplot(new_data , aes(x = (value), y = (pred))) + 
-  geom_point() +
+final_mod <- ggplot(output , aes(x = (Actual), y = (Predicted))) + 
+  geom_point(colour = '#fab62f') +
   xlim(0, 200) +
   ylim(0, 200) +
-  geom_abline(slope=1, intercept = 0, color = 'black')+
+  geom_abline(slope=1, intercept = 0, color ='white')+
   xlab("Measured  (ug/L)") +
   ylab("Predicted (ug/L)")+
-  labs(subtitle = "No AOI filter, no outlier detection, (< 200 ug / L )",title = 'Base Model')+
-  stat_poly_eq() +
-  theme_few() 
+  stat_poly_eq(colour = 'white') +
+  theme_bw() + 
+  theme(axis.title = element_text(size = 20),panel.border  = element_rect(colour = "white"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.text = element_text(size = 16)) + 
+        theme_bw() + 
+        theme(axis.text = element_text(colour = 'white'), axis.title = element_text( colour = 'white'), plot.title = element_text(colour = 'white'),
+              plot.background = element_rect(fill = '#292b30', color = 'NA'),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(), 
+              panel.border = element_blank(),
+              panel.background = element_rect(fill = '#292b30'),
+              legend.background = element_rect(fill = '#292b30'), 
+              legend.title = element_blank(),legend.position = 'bottom', legend.text = element_text(colour = 'white') )
+  
+ggsave("C:/Users/samsi/Desktop/final_evals.jpeg", width=10, height = 8, units="in", dpi=330)
+
+
+save(final_model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_AOI_filter_90th_percentile.rds")
+```
+
+# Explore variable importance
+```{r}
+library(vip)
+
+imp <- varImp(final_model, scale = FALSE)
+
+imp <- as.data.frame(imp$importance) %>% rownames_to_column() %>% rename(Feature = 'rowname')
+
+#For cleaner predictor variables names in plot 
+names_new <- tibble(Feature = c("R.BS", "fai", "GCI", "GB", "Surface_temp_kelvin", "IRG", "SN", 
+"BR_G", "N.RB", "RS", "RN"), namesNew = c("Red / (Blue + Swir1)" , "Floating Algal Index", "Green Chlorophyll Index", "Green / Blue", "Surface Temp Kelvin", "Red / Green", "Swir 1 / Nir", 
+"Blue - Red / Green", "Nir / (Red + Blue)", "Red / Swir1", "Red / Nir"))
+
+imp <- left_join(imp, names_new) %>% select(-Feature) %>% rename(Feature = "namesNew") %>% drop_na()
+
+plot <- xgb.ggplot.importance(importance_matrix = imp)
+
+imp$Feature <- factor(imp$Feature, levels = imp$Feature)
+
+ggplot(imp, aes(x = Overall)) + 
+geom_bar( aes(y = Feature), stat = 'identity', fill = "#fab62f") + 
+guides(fill="none")+ 
+theme_bw() +
+labs(title = "")+
+    scale_y_discrete(limits=rev)+ 
+    xlab("Gain") + 
+ylab("Predictor") + 
+  theme(axis.text = element_text(colour = 'white', size = 20), axis.title = element_text(size = 20, colour = 'white'),plot.title = element_text(size = 30, colour = 'white'),
+            plot.background = element_rect(fill = '#292b30', color = 'NA'),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(), 
+            panel.border = element_blank(),
+            panel.background = element_rect(fill = '#292b30'),
+            legend.background = element_rect(fill = '#292b30'), 
+            legend.title = element_text(colour = 'white'), legend.text = element_text(colour = 'white'))
+
+#ggsave("C:/Users/samsi/Desktop/Varimp.jpg", width=8, height = 6, units="in", dpi=330)
 ```
