@@ -37,6 +37,7 @@ library(parallelly)
 library(doParallel)
 library(httpgd)
 library(ggpmisc)
+library(vip)
 
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -442,7 +443,6 @@ save(final_model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/Ohi
 
 # Explore variable importance
 ```{r}
-library(vip)
 
 imp <- varImp(final_model, scale = FALSE)
 
