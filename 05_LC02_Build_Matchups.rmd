@@ -20,13 +20,13 @@ library(feather)
 
 ```{r}
 
-corr_coef <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef.feather") 
+corr_coef <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_Corr_Coef.csv") 
 
 correction_coef_99 <- corr_coef %>%
   filter(fit %in% c(NA, "98_quant")) %>%
   dplyr::select(-fit)
 
-sr_clean <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_SR_Clean.feather")
+sr_clean <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_SR_Clean.csv")
 ```
 
 ```{r}
@@ -70,8 +70,11 @@ date_plus_2 <- inner_join(date_plus_2, sr_clean, by = c('SiteID', 'date'))
 #bind them up and apply coefficients
 sr_final <- rbind(date0, date_min_1, date_min_2, date_plus_1, date_plus_2)
 
+sr_final <- sr_clean %>% filter(SiteID %in% sites_within$SiteID)
+
 sr_final <- sr_final %>% 
   mutate(rn = row_number()) %>%
+  mutate(uniqueID = row_number()) %>%
   mutate(sat = as.character(sat)) %>%
   gather(Red ,Green, Blue, Nir, Swir1, Swir2, key='band', value='value') %>%
   group_by(band, sat) %>%
@@ -87,7 +90,6 @@ sr_final <- sr_final %>%
     rename_at(vars(Red, Green, Blue, Nir, Swir1, Swir2),function(x) paste0(x,"_raw")) %>%
     rename_at(vars(starts_with("cor")),            funs(stringr::str_replace_all(., "cor_", ""))) 
 
-sr_final <- sr_final %>% mutate(uniqueID = row_number())
 ```
 
 # Adding band ratios , color metrics for model predictors 
@@ -225,10 +227,10 @@ pull_transform <- function(df, maxRGB=1, RGB=F) {
             dw = 'NA', 
             hexcolor = 'NA')
 
-  data <-rbind(color, color_na) %>%
-  mutate(dw = as.numeric(data$dw)) %>% 
-  mutate(saturation = as.numeric(data$saturdation)) %>% 
-  mutate(hue = as.numeric(data$hue))
+  data <-rbind(color, color_na)# %>%
+ # mutate(dw = as.numeric(data$dw))# %>% 
+#  mutate(saturation = as.numeric(data$saturation)) %>% 
+#  mutate(hue = as.numeric(data$hue))
   return(data)
 }
 
