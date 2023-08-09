@@ -446,7 +446,7 @@ final_mod <- ggplot(output , aes(x = (Actual), y = (Predicted))) +
   theme_bw() + 
   theme(axis.title = element_text(size = 20),panel.border  = element_rect(colour = "white"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.text = element_text(size = 16)) + 
         theme_bw()  +
-        theme(axis.text = element_text(colour = 'white'), axis.title = element_text( colour = 'white'), plot.title = element_text(colour = 'white'),
+        theme(axis.text = element_text(colour = 'white', size = 14), axis.title = element_text( colour = 'white', size = 16), plot.title = element_text(colour = 'white'),
               plot.background = element_rect(fill = '#292b30', color = 'NA'),
               panel.grid.major = element_blank(),
               panel.grid.minor = element_blank(), 
@@ -494,4 +494,27 @@ ylab("Predictor") +
             legend.title = element_text(colour = 'white'), legend.text = element_text(colour = 'white'))
 
 #ggsave("C:/Users/samsi/OneDrive - University of Pittsburgh/Ohio_River_SR/Models/final_model_Varimp.jpg", width=8, height = 6, units="in", dpi=330)
+```
+
+# Use final model to predict chlorophyll-a on RiverSR dataset 
+```{r}
+# read riverSR 
+riverSR <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_polygons.feather")
+
+riverSR$pred <- predict(final_model, riverSR[,ffs_features])
+
+# predicted value will be logged so you need to call exp 
+riverSR <- riverSR %>% 
+mutate(pred = exp(pred))
+
+write_feather(riverSR, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_RiverSR_preds.feather")
+
+# prepare file with just Ohio River preds 
+
+Ohio_IDS <- readRDS("C:/Users/samsi/OneDrive - University of Pittsburgh/dataViz_rShiny/Viz/OhioRiver_Viz/data/temp.rDS") %>% select(ID)
+
+Ohio_RiverSR <- riverSR %>% filter(ID %in% Ohio_IDS$ID)
+
+write_feather(Ohio_RiverSR, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_Ohio_RiverSR_preds.feather")
+
 ```
