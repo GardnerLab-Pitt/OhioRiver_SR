@@ -1,11 +1,11 @@
 ---
-title: "LC02 chl-a model prototyping"
+title: "LC02 chl-a model"
 author: "Sam Sillen"
-date: "2023-06-12"
+date: "2023-12-08"
 output: html_document
 ---
 
-packages
+# packages
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(feather)
@@ -41,9 +41,8 @@ library(ggpmisc)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
+# holdout function for test / train 
 ```{r functions, echo=FALSE}
-## Functions we will use later
 # This function randomly samples match-ups across different locations, times, and concentrations for splitting training/validation data
 
 holdout <- function(x) {
@@ -80,16 +79,16 @@ holdout <- function(x) {
 }
 ```
 
-# Read in spatial data to filter matchup data to ROI
+# Filter matchup data to roi 
 ```{r chla}
 # SF for HUC2 basins from USDA NHD WBD - includes Mid Atlantic (HUC2_02), Great Lakes (HUC2_04), Ohio (HUC2_05), Tennessee (HUC2_06) and Upper Mississippi (HUC2_07)
-huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/nhd_data/HUC2_Merge", layer="HUC2_Merge") 
+huc2_basins <- read_sf(dsn="/Users/samsillen/Library/CloudStorage/OneDrive-UniversityofPittsburgh/nhd_data/HUC2_Merge", layer="HUC2_Merge") 
 st_transform(huc2_basins, crs ="+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
 
 huc2_basins <- huc2_basins %>% filter(name != 'Mid Atlantic Region')
 
 # Load in LC02 matchup database
-matchup <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_matchup.feather")
+matchup <- read_feather("/Users/samsillen/Library/CloudStorage/OneDrive-UniversityofPittsburgh/OhioRiver_SR/Data/LC02_Matchups_new_coefs.feather")
 
 matchup <- matchup %>% 
 filter(harmonized_parameter == 'chl.a')  %>% 
@@ -156,7 +155,7 @@ df <- matchup_filter %>%
 
 #df <- read_feather("C:/Users/samsi/Desktop/df.feather")
 
-outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/outliers_95_percentile_1000rounds_percentile.csv") %>% #from outlier test
+outliers <- read_csv("/Users/samsillen/Library/CloudStorage/OneDrive-UniversityofPittsburgh/OhioRiver_SR/Models/Outlier detection/outlier_detection_old.csv") %>% #from outlier test
 filter(count > 30)
 
 df <- df %>% filter(!uniqueID %in% outliers$uniqueID)
@@ -249,7 +248,9 @@ evals <- output %>%
             smape = smape(Actual, Predicted)) %>% view()
 ```
 
+# Validation plot
 ```{r}
+#Dark theme
 ggplot(output , aes(x = (Actual), y = (Predicted))) + 
   geom_point(colour = '#fab62f', alpha = 0.7) +
   xlim(0, 200) +
@@ -257,6 +258,8 @@ ggplot(output , aes(x = (Actual), y = (Predicted))) +
   geom_abline(slope=1, intercept = 0, color = 'white')+
   xlab("Measured  (ug/L)") +
   ylab("Predicted (ug/L)")+
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
   labs(title = 'Base Model')+
   stat_poly_eq(colour = 'white') +
   theme_few() +
@@ -268,6 +271,31 @@ ggplot(output , aes(x = (Actual), y = (Predicted))) +
             panel.background = element_rect(fill = '#292b30'),
             legend.background = element_rect(fill = '#292b30'), 
             legend.title = element_text(colour = 'white'))
+
+#Light theme 
+
+ggplot(output , aes(x = (Actual), y = (Predicted))) + 
+  geom_point(colour = 'black', alpha = 0.7) +
+  xlim(0, 200) +
+  ylim(0, 200) +
+  geom_abline(slope=1, intercept = 0, color = 'black')+
+  xlab("Measured  (ug/L)") +
+  ylab("Predicted (ug/L)")+
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  labs(title = 'Base Model')+
+  stat_poly_eq(colour = 'white') +
+  theme_few() +
+    theme(axis.text = element_text(colour = 'black', size = 20), axis.title = element_text(size = 20, colour = 'black'),plot.title = element_text(size = 30, colour = 'black'),
+           # plot.background = element_rect(fill = '#292b30', color = 'NA'),
+           # panel.grid.major = element_blank(),
+          #  panel.grid.minor = element_blank(), 
+            panel.border = element_blank(),
+            #panel.background = element_rect(fill = '#292b30'),
+            #legend.background = element_rect(fill = '#292b30'), 
+            legend.title = element_text(colour = 'white'))
+
+
 
 #ggsave("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Plots/ModelResults/BaseModel.jpeg", width=8, height =6, units="in", dpi=330)
 ```
@@ -306,7 +334,7 @@ on.exit(stopCluster(cl))
 ffsResults <- ffs$perf_all
 
 # Save the results
-write_feather(ffsResults, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/ffs_results__AOI_filter_outlier_raw_95_percentile.feather")
+write_feather(ffsResults, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/new_coefsffs_results__AOI_filter_outlier_raw_95_percentile.feather")
 #
 ffsResults %>%
   group_by(nvar) %>%
@@ -323,19 +351,18 @@ ffsResults %>%
 #Sometimes I have to run this unregister doparallel function, because I get an error about an invalid connection due to a lingering parallel operation
 
 #unregister_dopar <- function() {
-#  env <- foreach:::.foreachGlobals
+#    env <- foreach:::.foreachGlobals
 #  rm(list=ls(name=env), pos=env)
 #}
 
 #unregister_dopar()
 
-ffsResults <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/ffs_results_95_percentile.feather")
+ffsResults <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/new_coefsffs_results__AOI_filter_outlier_raw_95_percentile.feather")
 
-ffs_features <- ffsResults[ffsResults$RMSE == min(ffsResults$RMSE),] %>%
-drop_na() %>%
+ffs_features <- ffsResults[ffsResults$RMSE == min(ffsResults$RMSE),]  %>%
   dplyr::select(-c(nvar, RMSE, SE)) %>%
   slice_head(n = 1) %>%
-  select(-var11) %>% 
+  select(-var21) %>% 
   paste(.)
 
 grid_base <- expand.grid(
@@ -401,7 +428,7 @@ final_model <- caret::train(
 
 final_model$bestTune
 
-save(final_model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_95th_percentile.rds")
+saveRDS(final_model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/new_coefs_final_model_95th_percentile.rDS")
 
 ```
 
@@ -409,7 +436,8 @@ save(final_model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/Ohi
 ```{r eval}
 # load final model 
 
-final_model <- readRDS("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_95th_percentile.rds")
+
+final_model <- readRDS("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/new_coefs_final_model_95th_percentile.rDS")
 
 # evaulate the model
 pred<- predict(final_model, validate[,ffs_features])
@@ -417,7 +445,7 @@ actual <- (validate$value)
 uniqueID <- val.cols$uniqueID
 
 output <- tibble(Predicted = pred, Actual = actual,uniqueID = uniqueID) %>%
-  mutate(Actual = exp(Actual), Predicted = exp(Predicted)) %>%
+  mutate(Actual = (Actual), Predicted = (Predicted)) %>%
   left_join(df, by="uniqueID") %>%
   mutate(residual = Actual - Predicted,
          year = year(date),
@@ -434,28 +462,57 @@ evals <- output %>%
             bias = bias(Actual, Predicted),
             p.bias = percent_bias(Actual, Predicted),
             smape = smape(Actual, Predicted)) %>% view()
+```
 
-final_mod <- ggplot(output , aes(x = (Actual), y = (Predicted))) + 
-  geom_point(colour = '#fab62f', alpha = 0.5) +
+# Final model plots
+```{r}
+
+#Dark theme
+ggplot(output , aes(x = (Actual), y = (Predicted))) + 
+  geom_point(colour = '#fab62f', alpha = 0.7) +
   xlim(0, 200) +
   ylim(0, 200) +
-  geom_abline(slope=1, intercept = 0, color ='white')+
+  geom_abline(slope=1, intercept = 0, color = 'white')+
   xlab("Measured  (ug/L)") +
   ylab("Predicted (ug/L)")+
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  labs(title = 'Base Model')+
   stat_poly_eq(colour = 'white') +
-  theme_bw() + 
-  theme(axis.title = element_text(size = 20),panel.border  = element_rect(colour = "white"), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.text = element_text(size = 16)) + 
-        theme_bw()  +
-        theme(axis.text = element_text(colour = 'white', size = 14), axis.title = element_text( colour = 'white', size = 16), plot.title = element_text(colour = 'white'),
-              plot.background = element_rect(fill = '#292b30', color = 'NA'),
-              panel.grid.major = element_blank(),
-              panel.grid.minor = element_blank(), 
-              panel.border = element_blank(),
-              panel.background = element_rect(fill = '#292b30'),
-              legend.background = element_rect(fill = '#292b30'), 
-              legend.title = element_blank(),legend.position = 'bottom', legend.text = element_text(colour = 'white') )
-  
-ggsave("C:/Users/samsi/Desktop/dark_background_final_evals_ffs_hypertuned_95th_percentile.jpeg", width=10, height = 8, units="in", dpi=330)
+  theme_few() +
+    theme(axis.text = element_text(colour = 'white', size = 20), axis.title = element_text(size = 20, colour = 'white'),plot.title = element_text(size = 30, colour = 'white'),
+            plot.background = element_rect(fill = '#292b30', color = 'NA'),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(), 
+            panel.border = element_blank(),
+            panel.background = element_rect(fill = '#292b30'),
+            legend.background = element_rect(fill = '#292b30'), 
+            legend.title = element_text(colour = 'white'))
+
+
+#Light theme 
+
+ggplot(output , aes(x = (Actual), y = (Predicted))) + 
+  geom_point(colour = 'black', alpha = 0.7) +
+  xlim(0, 200) +
+  ylim(0, 200) +
+  geom_abline(slope=1, intercept = 0, color = 'black')+
+  xlab("Measured  (ug/L)") +
+  ylab("Predicted (ug/L)")+
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") +
+  labs(title = 'Base Model')+
+  stat_poly_eq(colour = 'white') +
+  theme_few() +
+    theme(axis.text = element_text(colour = 'black', size = 20), axis.title = element_text(size = 20, colour = 'black'),plot.title = element_text(size = 30, colour = 'black'),
+           # plot.background = element_rect(fill = '#292b30', color = 'NA'),
+           # panel.grid.major = element_blank(),
+          #  panel.grid.minor = element_blank(), 
+            panel.border = element_blank(),
+            #panel.background = element_rect(fill = '#292b30'),
+            #legend.background = element_rect(fill = '#292b30'), 
+            legend.title = element_text(colour = 'white'))
+
 
 ```
 
@@ -499,22 +556,63 @@ ylab("Predictor") +
 # Use final model to predict chlorophyll-a on RiverSR dataset 
 ```{r}
 # read riverSR 
-riverSR <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_polygons.feather")
+riverSR <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_polygons_COMID.feather")
 
-riverSR$pred <- predict(final_model, riverSR[,ffs_features])
+huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/nhd_data/HUC2_Merge", layer="HUC2_Merge") 
+st_transform(huc2_basins, crs ="+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
 
+Illinois <- read_sf("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/illinois_huc.shp")
+
+Ohio <- huc2_basins %>% filter(name == 'Ohio Region')
+
+nhd <- read_sf("G:/My Drive/nhd_polys/nhd_COMID_poly.shp")
+
+nhd <- nhd %>% st_transform(st_crs(Illinois))
+
+Ohio_RiverSR <- st_join(nhd, Illinois) %>% drop_na(name)
+
+sr <- riverSR %>% filter(COMID %in% Ohio_RiverSR$COMID)
+
+sr$pred <- predict(final_model, sr[,ffs_features])
+max(sr$pred)
 # predicted value will be logged so you need to call exp 
-riverSR <- riverSR %>% 
+sr <- sr %>% 
 mutate(pred = exp(pred))
 
-write_feather(riverSR, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_RiverSR_preds.feather")
+write_feather(sr, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/Illinoia_RiverSR_COMID.feather")
 
 # prepare file with just Ohio River preds 
 
-Ohio_IDS <- readRDS("C:/Users/samsi/OneDrive - University of Pittsburgh/dataViz_rShiny/Viz/OhioRiver_Viz/data/temp.rDS") %>% select(ID)
+Ohio_IDS <- readRDS("C:/Users/samsi/OneDrive - University of Pittsburgh/dataViz_rShiny/Viz/OhioRiver_Viz/data/temp_v3.rDS") %>% select(ID)
 
-Ohio_RiverSR <- riverSR %>% filter(ID %in% Ohio_IDS$ID)
+ <- riverSR %>% filter(ID %in% Ohio_IDS$ID)
 
-write_feather(Ohio_RiverSR, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_Ohio_RiverSR_preds.feather")
+Ohio_RiverSR <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_Ohio_RiverSR_preds.feather")
 
+
+test <- Ohio_RiverSR %>% group_by(ID) %>% summarise(mean = max(pred))
+
+test <- test %>% select(ID, mean)
+
+riverSR_geom <- readRDS("C:/Users/samsi/OneDrive - University of Pittsburgh/dataViz_rShiny/Viz/OhioRiver_Viz/data/temp_v3.rDS")
+
+RiverSR_geom <- riverSR_geom %>% 
+select(ID, geometry)
+
+RiverSR_geom <- RiverSR_geom %>% 
+left_join(test)
+
+
+RiverSR_geom <- RiverSR_geom %>% st_as_sf() %>% distinct(ID, .keep_all = TRUE)
+
+RiverSR_geom <- readRDS( file = "C:/Users/samsi/Desktop/RiverSR_geom.rDS")
+
+leaflet() %>%
+        addProviderTiles(providers$CartoDB.Positron, group = 'Grey basemap') %>%
+        addGlPolylines(data = RiverSR_geom, weight = 2.5,  opacity = 1,   color =  ~ pal4(mean),  popup = RiverSR_geom$ID, layerId =  RiverSR_geom$ID, group = "Reach-level mean") %>%
+        setView(lat = 39.144348, lng = -84.098210,  zoom = 6) %>%
+                addLegend("bottomleft", pal = pal4, values = RiverSR_geom$mean,
+                  title = "Reach-level mean", group = 'Reach-level mean',
+                  opacity = 1
+        ) 
 ```
