@@ -258,7 +258,7 @@ combined_corr <- ggarrange(plot_57, plot_78, nrow = 2)
 
 combined_corr
 
-ggsave("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Plots/new_SR_correction_bands.jpeg", width = 11.5, height = 10, unit = 'in')
+ggsave("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Plots/SR_band_correction.jpeg", width = 11.5, height = 10, unit = 'in')
 
 
 coef_8 <- sr_78_rank %>%
@@ -287,4 +287,3 @@ corr_coef <- bind_rows(coef_5, coef_7, coef_8, coef_9) %>%
 write_feather(corr_coef, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef.feather") 
 write_feather(sr_clean, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_SR_Clean.feather")
 ```
-

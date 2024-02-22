@@ -20,7 +20,7 @@ library(feather)
 
 ```{r}
 
-corr_coef <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/LC02_Corr_Coef.csv") 
+corr_coef <- read.csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/SR_Band_Correction.csv") 
 
 correction_coef_99 <- corr_coef %>%
   filter(fit %in% c(NA, "98_quant")) %>%
