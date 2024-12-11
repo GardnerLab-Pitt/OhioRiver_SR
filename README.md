@@ -12,4 +12,6 @@ This repository contains code for creating a dataset of chlorophyll-a and satell
 
 * THe LC02_model_prototyping code is for training ml models and predicting chlorophyll-a in the Illinois and Ohio River Basins. 
 
-* The nhd_centerline_to_polygon is a script for taking nhd centerlines and creating polygons areound unique reaches (COMID). This is a preprocessing step for running the LC02 polygon pull code. 
+* The nhd_centerline_to_polygon is a script for taking nhd centerlines and creating polygons areound unique reaches (COMID). This is a preprocessing step for running the LC02 polygon pull code.
+
+* The rs_wq_comparison file is for comparing sites in the Illionis River Basin that have chlorophyll-a data with high temporal resolution (i.e. monthly sampling) and remote sensing predictions of chlorophyll-a. 
