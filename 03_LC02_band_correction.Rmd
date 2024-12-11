@@ -9,7 +9,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Overview
 ```{r}
 # This file uses all the available SR data over wqp/lagos sites (not just in-situ matchups) to create correlation coefficients between different landsat sensors. 
 
@@ -24,12 +23,14 @@ library(lubridate)
 library(data.table)
 library(broom)
 library(feather)
+library(ggpubr)
+
 ```
 
 # Prepare SR data for joining with in situ 
 ```{r}
 
-sr_path <- "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_matchup_pull"
+sr_path <- "G:/My Drive/LC02_matchup_pull_algalMask"
 
 sr_raw <- list.files(path=sr_path, pattern=".csv", full.names = T) %>%
   map_df(~ fread(., stringsAsFactors = F))
@@ -41,25 +42,25 @@ sr <- sr_raw %>%
          date = as.POSIXct(date, origin = "1970-01-01", tz = 'UTC'),
          date = as_date(date))
 
-  ```
+```
 
 ```{r}
-#Start to build SR file 
+# Start to build SR file 
 sr_clean <- sr %>% 
     filter(pCount_dswe1 > 5, 
     hillShadow > 0, 
-    Blue <= 1, 
+    Blue <= 0.2, 
     Blue >= 0,
-    Green <= 1, 
+    Green <= 0.2, 
     Green >=  0, 
-    Red <= 1, 
+    Red <= 0.2, 
     Red >=  0,
-    Swir1 <= 1, 
+    Swir1 <= 0.2, 
     Swir1 >=  0,
-    Swir2 <= 1, 
+    Swir2 <= 0.2, 
     Swir2 >=  0, 
     Nir >=  0, 
-    Nir <= 1) %>% 
+    Nir <= 0.2) %>% 
     rename(index = "system:index") %>%
     mutate(LT05 = str_extract(index, pattern = c('LT05')),
            LE07 = str_extract(index, pattern = c('LE07')),
@@ -90,10 +91,26 @@ sr_clean <- sr %>%
 # Coefficients for LS 5
 ```{r}
 
+sr_clean <- sr_clean  %>%  
+    filter(pCount_dswe1 > 5, 
+    hillShadow > 0, 
+    Blue <= 0.2, 
+    Blue >= 0,
+    Green <= 0.2, 
+    Green >=  0, 
+    Red <= 0.2, 
+    Red >=  0,
+    Swir1 <= 0.2, 
+    Swir1 >=  0,
+    Swir2 <= 0.2, 
+    Swir2 >=  0, 
+    Nir >=  0, 
+    Nir <= 0.2)
+
 sr_57 <- sr_clean %>%
   filter(sat %in% c("LE07", "LT05")) %>%
   filter(between(date, "1999-01-01", "2012-05-01" )) %>%
-  # filter to site with enough data
+  # Filter to site with enough data
   filter(n_years > 10) %>%
   select(SiteID, date, sat, count, n_years, Blue, Red, Green, Nir, Swir1, Swir2) %>%
   gather(Blue:Swir2, Green, key='band', value='value') 
@@ -137,7 +154,7 @@ poly_5_all <- function(df){
   lm(value_7 ~ poly(value_5, 2, raw=T), data = df)
 }
 
-## polynomial correction fit
+# Polynomial correction fit
 poly_57 <- sr_57_rank %>%
   ungroup() %>%
 #  filter(band != "dw") %>%
@@ -172,12 +189,14 @@ geom_point( aes(x = value_5, y = value_7))+
 #geom_point(aes(x=pred_all, y=value_7), color = 'red', alpha =0.5)+
 geom_point(aes(x=pred, y = value_7), color = 'red', alpha =0.5)+
 geom_abline(aes(slope = 1, intercept =0))+
-xlim(0,0.7) + 
-ylim(0,0.7) + 
+xlim(0,0.2) +
+ylim(0,0.2) +
 facet_wrap(~band, scales = "free")+
   labs(x = 'Landsat 5', y = 'Landsat 7') + 
   theme_bw() + 
-  theme(plot.margin = margin(11, 11, 11, 11), axis.text = element_text(colour = 'black', size = 16),strip.text = element_text(size=20), axis.title = element_text(size = 24, colour = 'black'),plot.title = element_text(size = 30, colour = 'black'))
+  theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(), 
+           plot.margin = margin(11, 11, 11, 11), axis.text = element_text(colour = 'black', size = 16),strip.text = element_text(size=20), axis.title = element_text(size = 24, colour = 'black'),plot.title = element_text(size = 30, colour = 'black'))
 
 ```
 
@@ -191,7 +210,7 @@ sr_78 <- sr_clean %>%
   select(SiteID, date, sat, count, n_years, Blue, Red, Green, Nir, Swir1, Swir2) %>%
   gather(Blue:Swir2, key='band', value='value')  
 
-# do ranking plotting percentiles, joining, and correcting
+# Do ranking plotting percentiles, joining, and correcting
 sr_78_rank  <- sr_78 %>%
   droplevels() %>%
   filter(sat =="LC08") %>%
@@ -248,17 +267,19 @@ plot_78 <- ggplot(poly_78) +
   geom_point( aes(x=pred, y= value_7), color="red", alpha=0.5)+
   geom_abline(aes(slope=1, intercept=0)) +
   facet_wrap(~band, scales="free") + 
-xlim(0,1) +
-ylim(0, 1) +
+xlim(0,0.2) +
+ylim(0, 0.2) +
   labs(x = 'Landsat 8', y = 'Landsat 7') + 
   theme_bw() + 
-  theme(plot.margin = margin(11, 11, 11, 11), axis.text = element_text(colour = 'black', size = 16),strip.text = element_text(size=20), axis.title = element_text(size = 24, colour = 'black'),plot.title = element_text(size = 30, colour = 'black'))
+  theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(), 
+           ,plot.margin = margin(11, 11, 11, 11), axis.text = element_text(colour = 'black', size = 16),strip.text = element_text(size=20), axis.title = element_text(size = 24, colour = 'black'),plot.title = element_text(size = 30, colour = 'black'))
 
 combined_corr <- ggarrange(plot_57, plot_78, nrow = 2)
 
 combined_corr
 
-ggsave("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Plots/SR_band_correction.jpeg", width = 11.5, height = 10, unit = 'in')
+#ggsave("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Plots/sr_band_correction.jpeg", width = 11.5, height = 10, unit = 'in')
 
 
 coef_8 <- sr_78_rank %>%
@@ -278,12 +299,12 @@ coef_8 <- sr_78_rank %>%
 
 coef_7 <- tibble(band = c("Blue", "Red", "Green", "Nir", "Swir1", "Swir2"), intercept = 0, coef1=1, coef2=0, sat= "LE07")
 
-coef_9 <- coef_8 %>% #Landsat 9 sensor is virtually the same as LS 8 , so we are assuming the coefficients should be the same 
+coef_9 <- coef_8 %>% # Landsat 9 sensor is virtually the same as LS 8 , so we are assuming the coefficients should be the same 
 mutate(sat = "LC09")
 
 corr_coef <- bind_rows(coef_5, coef_7, coef_8, coef_9) %>%
   ungroup()
 
-write_feather(corr_coef, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef.feather") 
-write_feather(sr_clean, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_SR_Clean.feather")
+#write_feather(corr_coef, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_Corr_Coef_algal_mask.feather") # Corr coefficients
+#write_feather(sr_clean, "C:/Users/samsi/OneDrive - University of Pittsburgh/LC02_SR_Clean_algal_mask.feather") # Full siteSR with corr data
 ```

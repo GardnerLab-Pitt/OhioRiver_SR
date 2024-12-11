@@ -1,0 +1,204 @@
+---
+title: "rs_wq_comparison"
+output: html_document
+date: "2024-10-28"
+editor_options: 
+  chunk_output_type: console
+---
+
+# This script is compares sites in the Illionis River Basin that have chlorophyll-a data with high temporal resolution (i.e. monthly sampling) with remote sensing predictions of chlorophyll-a. 
+
+# Packages
+```{r}
+library(tidyverse)
+library(lubridate)
+library(leaflet)
+library(leafgl)
+library(scales)
+library(sf)
+library(feather)
+library(ggplot2)
+library(suncalc)
+library(ggpubr)
+```
+
+# SiteID: IL_05558300 
+```{r}
+
+IL_05558300 <- read_csv('/Users/samsillen/Library/CloudStorage/OneDrive-UniversityofPittsburgh/OhioRiver_SR/Data/HighResWQData/illinois_wq_data.csv') %>% 
+  mutate(datetime = mdy_hm(datetime)) %>%
+  mutate(date = date(datetime)) %>% 
+  mutate(year = year(datetime)) %>% 
+  filter(year == 2021)
+
+ggplot() + 
+  geom_line(data = IL_05558300, aes(x = date, y = value), group = 1) + 
+  geom_point(data = IL_05558300, aes(x = date, y = value), alpha = 0.5) +
+  labs(title = "USGS-05558300 (2020-2022)") + 
+  ylim(0, 100) + 
+  xlab("Date") +
+  ylab("Chlorophyll-a (ug/L)") + 
+scale_x_date(date_breaks = "1 month", date_minor_breaks = "1 week",
+             date_labels = "%b-%Y") +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 90), legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor =  element_blank())
+
+# load in pred data 
+
+pred_data_full <- read_feather('/Users/samsillen/Library/CloudStorage/OneDrive-UniversityofPittsburgh/OhioRiver_SR/chl-paper/IL_algal_mask_pred.feather') 
+
+IL_05558300_preds <- pred_data_full %>% filter(COMID == '14837877', year %in% c('2021'))
+
+# remove night time observations of in situ data
+
+IL_05558300 <- IL_05558300 %>%
+  mutate(lat = 41.10727778, lon = -89.3562222)
+
+chl_sunlight = getSunlightTimes(data=IL_05558300, tz='UTC', keep = c("sunrise", "sunset")) %>%
+  distinct(date, lat, lon, .keep_all = TRUE)
+
+# Rejoin the sunrise and sunset data with the original dataframe of all sites
+
+IL_05558300_clean <- merge(IL_05558300, chl_sunlight, by=c("date","lat","lon")) %>%
+  filter(datetime > sunrise & datetime < sunset)
+
+Plot1 <- ggplot() + 
+# geom_line(data = IL_05558300_clean, aes(x = date, y = value), group = 1) + 
+  geom_point(data = IL_05558300_clean, aes(x = date, y = value), alpha = 0.5) +
+  #  geom_line(data = IL_05558300_preds, aes(x = date, y = pred), lty = 2, col = 'red') + 
+  geom_point(data = IL_05558300_preds, aes(x = date, y = pred), col = 'red', size = 2.5) +
+#  labs(title = "USGS-05558300") + 
+ ylim(0, 100) + 
+  xlab("Date") +
+  ylab("Chlorophyll-a (ug/L)") + 
+scale_x_date(date_breaks = "1 month", date_labels = "%b-%Y", limits = as.Date(c('2021-01-01','2021-12-01'))) +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(),axis.text.y = element_text(size = 12, colour = 'black'), axis.title.y = element_text(size = 16, color = 'black'), axis.text.x = element_text( angle = 90), legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor =  element_blank(),  plot.margin = margin(0.5, 0.5, 0.5 , 0.5, "cm"))
+
+#ggsave("/Users/samsillen/Library/CloudStorage/OneDrive-UniversityofPittsburgh/OhioRiver_SR/Plots/PaperFigures/sr_wq_comparison/USGS-0558300-noline3.png", width=10, height = 8, units="in", dpi=330)
+
+```
+
+# SiteID: 05586300
+```{r}
+
+IL_05586300 <- read_csv('/Users/samsillen/Library/CloudStorage/OneDrive-UniversityofPittsburgh/OhioRiver_SR/Data/HighResWQData/il_wq_6300.csv') %>% mutate(datetime = mdy_hm(datetime)) %>% 
+  mutate(date = date(datetime)) %>% 
+  mutate(year = year(datetime)) %>% 
+  filter(year %in% c('2017'))
+
+ggplot() + 
+  geom_line(data = IL_05586300, aes(x = date, y = value), group = 1) + 
+  geom_point(data = IL_05586300, aes(x = date, y = value), alpha = 0.5) +
+  labs(title = "USGS-05586300 (2019)") + 
+  ylim(0, 100) + 
+  xlab("Date") +
+  ylab("Chlorophyll-a (ug/L)") + 
+scale_x_date(date_breaks = "1 month", date_minor_breaks = "1 week",
+             date_labels = "%b-%Y") +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 90), legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor =  element_blank())
+
+# load in pred data 
+
+IL_05586300_preds <- pred_data_full %>% filter(COMID == '3598304', year %in% c('2016', '2017'))
+
+# remove night time observations of in situ data
+
+IL_05586300 <- IL_05586300 %>%
+  mutate(lat = 41.10727778, lon = -89.3562222)
+
+chl_sunlight = getSunlightTimes(data=IL_05586300, tz='UTC', keep = c("sunrise", "sunset"))
+
+# Rejoin the sunrise and sunset data with the original dataframe of all sites
+
+chl_sunlight <- chl_sunlight %>%
+  distinct(date, lat, lon, .keep_all = TRUE)
+
+IL_05586300_clean <- merge(IL_05586300, chl_sunlight, by=c("date","lat","lon")) %>%
+  filter(datetime > sunrise & datetime < sunset)
+
+Plot2 <- ggplot() + 
+# geom_line(data = IL_05586300_clean, aes(x = date, y = value), group = 1) + 
+  geom_point(data = IL_05586300_clean, aes(x = date, y = value), alpha = 0.5) +
+ #  geom_line(data = IL_05586300_preds, aes(x = date, y = pred), lty = 2, col = 'red') + 
+  geom_point(data = IL_05586300_preds, aes(x = date, y = pred), col = 'red', size = 2.5) +
+  #labs(title = "USGS-05586300") + 
+  ylim(0, 100) + 
+  xlab("Date") +
+  ylab("Chlorophyll-a (ug/L)") + 
+scale_x_date(date_breaks = "1 month", date_minor_breaks = "1 week",
+             date_labels = "%b-%Y", limits = as.Date(c('2017-01-01','2017-11-01'))) +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(),axis.text.y = element_text(size = 12, colour = 'black'), axis.title.y = element_text(size = 16, color = 'black'), axis.text.x = element_text( angle = 90), legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor =  element_blank(),  plot.margin = margin(0.5, 0.5, 0.5 , 0.5, "cm"))
+
+#ggsave("/Users/samsillen/Library/CloudStorage/OneDrive-UniversityofPittsburgh/OhioRiver_SR/Plots/PaperFigures/sr_wq_comparison/USGS-05586300-line.png", width=10, height = 8, units="in", dpi=330)
+
+```
+
+# SiteID: 5537980
+```{r}
+
+IL_5537980 <- read_csv('/Users/samsillen/Library/CloudStorage/OneDrive-UniversityofPittsburgh/OhioRiver_SR/Data/HighResWQData/il_wq_980.csv') %>%   mutate(datetime = mdy_hm(datetime)) %>%
+  mutate(year = year(datetime)) %>% 
+  mutate(date = date(datetime)) 
+ # filter(year %in% c('2018', '2017'))
+
+ggplot() + 
+  geom_line(data = IL_5537980, aes(x = date, y = value), group = 1) + 
+  geom_point(data = IL_5537980, aes(x = date, y = value), alpha = 0.5) +
+  labs(title = "USGS-05586300 (2019)") + 
+  ylim(0, 100) + 
+  xlab("Date") +
+  ylab("Chlorophyll-a (ug/L)") + 
+scale_x_date(date_breaks = "1 month", date_minor_breaks = "1 week",
+             date_labels = "%b-%Y") +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 90), legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor =  element_blank())
+
+# load in pred data 
+IL_5537980_preds <- pred_data_full %>% filter(COMID == '14787569', year %in% c('2018', '2019', '2020'))
+
+# remove night time observations of in situ data
+
+IL_5537980 <- IL_5537980 %>%
+  mutate(lat = 41.10727778, lon = -89.3562222)
+
+chl_sunlight = getSunlightTimes(data=IL_5537980, tz='UTC', keep = c("sunrise", "sunset"))
+
+# Rejoin the sunrise and sunset data with the original dataframe of all sites
+
+chl_sunlight <- chl_sunlight %>%
+  distinct(date, lat, lon, .keep_all = TRUE)
+IL_5537980_clean <- merge(IL_5537980, chl_sunlight, by=c("date","lat","lon")) %>%
+  filter(datetime > sunrise & datetime < sunset)
+
+Plot3 <- ggplot() + 
+ #geom_line(data = IL_5537980_clean, aes(x = date, y = value), group = 1) + 
+  geom_point(data = IL_5537980_clean, aes(x = date, y = value), alpha = 0.5) +
+  # geom_line(data = IL_5537980_preds, aes(x = date, y = pred), lty = 2, col = 'red') + 
+  geom_point(data = IL_5537980_preds, aes(x = date, y = pred), col = 'red', size = 2.5) +
+ # labs(title = "USGS-05586300") + 
+  ylim(0, 100) + 
+  xlab("Date") +
+  ylab("Chlorophyll-a (ug/L)") + 
+scale_x_date(date_breaks = "1 month", 
+             date_labels = "%b-%Y", limits = as.Date(c('2020-01-01','2020-12-01'))) +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(),axis.text.y = element_text(size = 12, colour = 'black'), axis.title.y = element_text(size = 16, color = 'black'), axis.text.x = element_text( angle = 90), legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor =  element_blank(),  plot.margin = margin(0.5, 0.5, 0.5 , 0.5, "cm"))
+
+
+#ggsave("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Plots/PaperFigures/USGS-05586300-line.png", width=10, height = 8, units="in", dpi=330)
+
+```
+
+# ggarrange plots 
+```{r}
+
+combined_plot <- ggarrange(Plot1, Plot2, Plot3, ncol = 1)
+
+combined_plot
+
+#ggsave("/Users/samsillen/Library/CloudStorage/OneDrive-UniversityofPittsburgh/OhioRiver_SR/Plots/PaperFigures/sr_wq_comparison/rs_wq_comparison_full-line.png", width=10, height = 12, units="in", dpi=330)
+
+```

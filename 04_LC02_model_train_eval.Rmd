@@ -5,7 +5,7 @@ date: "2023-12-08"
 output: html_document
 ---
 
-# packages
+# Packages
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(feather)
@@ -36,14 +36,15 @@ library(ggpmisc)
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# holdout function for test / train 
+# Holdout function for test / train 
 ```{r functions, echo=FALSE}
+
 # This function randomly samples match-ups across different locations, times, and concentrations for splitting training/validation data
 
 holdout <- function(x) {
 
   x <- x %>%
-  group_by(long_group, time_group) %>% #split up into spatial and temporal groups
+  group_by(long_group, time_group) %>% # Split up into spatial and temporal groups
   dplyr::mutate(mag = cut(value, quantile(
   x = value,
   c(0, 0.2, 0.4, 0.6, 0.8, 0.9, 1),
@@ -59,7 +60,7 @@ holdout <- function(x) {
   
   train <- x %>%
   group_by(time_group, long_group, mag) %>%
-  sample_frac(.8) %>% #80% of data will be used for training
+  sample_frac(.8) %>% # 80% of data will be used for training
   ungroup() %>%
   dplyr::mutate(.partitions = 1)
   
@@ -77,13 +78,13 @@ holdout <- function(x) {
 # Filter matchup data to roi 
 ```{r chla}
 # SF for HUC2 basins from USDA NHD WBD - includes Mid Atlantic (HUC2_02), Great Lakes (HUC2_04), Ohio (HUC2_05), Tennessee (HUC2_06) and Upper Mississippi (HUC2_07)
-huc2_basins <- read_sf(dsn="/Users/samsillen/OneDrive - University of Pittsburgh/nhd_data/HUC2_Merge", layer="HUC2_Merge") 
+huc2_basins <- read_sf(dsn="C:/Users/samsi/OneDrive - University of Pittsburgh/nhd_data/HUC2_Merge", layer="HUC2_Merge") 
 st_transform(huc2_basins, crs ="+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
 
 huc2_basins <- huc2_basins %>% filter(name != 'Mid Atlantic Region')
 
 # Load in LC02 matchup database
-matchup <- read_feather("/Users/samsillen/OneDrive - University of Pittsburgh/OhioRiver_SR/Matchups/LC02_matchup_algal_mask.feather")
+matchup <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Matchups/LC02_matchup_algal_mask.feather")
 
 matchup <- matchup %>% 
 filter(harmonized_parameter == 'chl.a')  %>% 
@@ -96,14 +97,16 @@ sp_pnts = st_as_sf(pnts, coords=c('long', 'lat'))
 st_crs(sp_pnts)=4326
 sp_pnts = st_transform(sp_pnts, crs=st_crs(huc2_basins)) # Make points spatial and set coordinate system to same as the HUC polygon
 
-#Perform intersection between HUC2 shapefile and matchup points
+# Perform intersection between HUC2 shapefile and matchup points
 Int=st_intersects(sp_pnts, huc2_basins)
-#Create a new column in the sp_pnts data frame and write intersection results to it
-sp_pnts$Intersect=lengths(Int)>0 #Finds only countries where intersection is TRUE
-#Combine intersection results with original matchup dataset
-matchup <- cbind(matchup, sp_pnts$Intersect) 
-#Rename newly added column 
 
+# Create a new column in the sp_pnts data frame and write intersection results to it
+sp_pnts$Intersect=lengths(Int)>0 #Finds only countries where intersection is TRUE
+
+# Combine intersection results with original matchup dataset
+matchup <- cbind(matchup, sp_pnts$Intersect) 
+
+# Rename newly added column
 matchup <- matchup %>% rename(Intersect = "sp_pnts$Intersect")
 ```
 
@@ -111,28 +114,36 @@ matchup <- matchup %>% rename(Intersect = "sp_pnts$Intersect")
 ```{r}
 # Finish cleaning the data by filtering out matchups that are outside of HUC boundaries and other filters
 matchup_filter <- matchup %>%
-#rename(value = "raw_value") %>%
   filter(algal_mask == 1) %>% 
   filter(value < 200) %>% 
-  filter(hillShadow ==1 | is.na(hillShadow)) %>%
+  filter(hillShadow == 1 | is.na(hillShadow)) %>%
   filter(value > 0.1) %>% # Minimum accepted chlorophyll value
   filter(Intersect == TRUE) %>% 
   filter(pCount_algal_mask > 30) %>% 
   filter(characteristicName != 'Chlorophyll a, corrected for pheophytin') %>%
   filter(Surface_temp_kelvin > 270) %>%
-  select(date:gn.gn, lat, long, uniqueID, hue, dw, saturation, type, SiteID) # select only the important vars, otherwise calling the holdout function will produce an error
+  select(date:gn.gn, lat, long, uniqueID, hue, dw, saturation, type, SiteID) # Select only the important vars, otherwise calling the holdout function will produce an error
 
-matchup_filter$dw <- as.numeric(matchup_filter$dw)
-matchup_filter$hue <- as.numeric(matchup_filter$hue)
-matchup_filter$saturation <- as.numeric(matchup_filter$saturation)
+
+test <- matchup_filter %>%
+  filter(Green <0.045, value > 30) 
+
+
+test1 <- matchup_filter %>% 
+  filter(Green > 0.035 & value < 5)
+
+sr_tests <- rbind(test, test1)
+
+matchup_filter_final <- matchup_filter %>% 
+  filter(!uniqueID %in% test2$uniqueID)
 
 ```
 
 # Setting up base model (no ffs, hypertuning)
 ```{r}
-# make splits for training/validation
+# Make splits for training/validation
 
-df <- matchup_filter %>%
+df <- matchup_filter_final %>%
   mutate(lat_group = cut_number(lat, 2, right= F),
          long_group = cut_number(long, 2, right=F),
          date = lubridate::ymd(date),
@@ -146,17 +157,10 @@ df <- matchup_filter %>%
   filter_all(all_vars(!is.infinite(.))) %>%
   filter_all(all_vars(!is.nan(.)))
 
-df <- df %>% distinct(date, Blue, Red, Green, value, .keep_all = TRUE)
-# Read outlier file in , filter df to remove outliers 
+df <- df %>% distinct(date, Blue, Red, Green, value, .keep_all = TRUE) # double check for duplicates
 
-#df <- read_feather("C:/Users/samsi/Desktop/df.feather")
 
-outliers <- read_csv("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/outliers_95_algal_mask.csv") %>% #from outlier test
-filter(count > 30)
-
-df <- df %>% filter(!uniqueID %in% outliers$uniqueID)
-
-# training data #80% of data to training 
+# Training data #80% of data to training 
 train <- df %>%
   filter(.partitions ==1) %>% 
   ungroup() %>%
@@ -165,7 +169,7 @@ train <- df %>%
   filter_all(all_vars(!is.nan(.))) 
 
 
-# validation data 10% of data to validation
+# Validation data 10% of data to validation
 validate <- df %>%
   filter(.partitions ==2) %>%
   ungroup() %>%
@@ -174,22 +178,22 @@ validate <- df %>%
   filter_all(all_vars(!is.nan(.))) 
 
 
-# make validation row index so you can rejoin later
+# Make validation row index so you can rejoin later
 val.cols <- df %>% 
   filter(.partitions ==2) %>%
   ungroup() %>%
   filter_all(all_vars(!is.infinite(.))) %>%
   filter_all(all_vars(!is.nan(.))) 
 
-#Select some spectral indices/bands to use as predictors in model. Consider looking at lit and adding a bunch more that are good for chl-a specifically. 
+# Select spectral indices/bands to use as predictors in model.
 features_1 <- df %>%
   select(NR:gn.gn, GCI, IRG, SABI, KIVU, GB, GNDVI, EVI, KAB, KRL, Surface_temp_kelvin, dw, hue, saturation) %>%
   names(.)
 
-# create cross validation folds for spatial-temporal cross validation
+# Create cross validation folds for spatial-temporal cross validation
 folds <- CreateSpacetimeFolds(train, spacevar = "long_group", timevar = "time_group", k = 2)
 
-# set training parameters
+# Set training parameters
 train_control_final <- caret::trainControl(
   method = "cv",
   savePredictions = T,
@@ -198,7 +202,7 @@ train_control_final <- caret::trainControl(
   indexOut = folds$indexOut,
   verboseIter = T,
   allowParallel = TRUE,
-  p = 0.8 #90% of the data is used to predict the other 10%
+  p = 0.8 #80% of the data is used to predict the other 10%
   )
   
 grid_final <-expand.grid(
@@ -208,7 +212,7 @@ grid_final <-expand.grid(
   eta = 0.3
 )
 
-# make a model
+# Make a model
 model <- caret::train(
   x = train[,features_1],
   y = train$value,
@@ -219,7 +223,7 @@ model <- caret::train(
   verbose = TRUE
 )
 
-# use model to make predictions over validation data
+# Use model to make predictions over validation data
 pred<- predict(model, validate[,features_1])
 actual <- (validate$value)
 uniqueID <- val.cols$uniqueID
@@ -232,7 +236,7 @@ output <- tibble(Predicted = pred, Actual = actual, uniqueID = uniqueID) %>%
          month = month(date),
          obs = ifelse(abs(residual) > 15, "bad", "good"))
 
-# calcualate error metrics 
+# Calcualate error metrics 
 evals <- output %>%
   mutate(Actual = (Actual), 
          Predicted = (Predicted)) %>%
@@ -248,7 +252,8 @@ print(evals)
 
 # Validation plot
 ```{r}
-#log space
+
+# Plot in log space
 
 ggplot(output , aes(x = log(Actual), y = log(Predicted))) + 
   geom_point(colour = 'black', alpha = 0.7) +
@@ -264,10 +269,9 @@ ggplot(output , aes(x = log(Actual), y = log(Predicted))) +
             panel.border = element_blank(),
             legend.background = element_rect(fill = '#292b30'), 
             legend.title = element_text(colour = 'white'))
-#write_feather(df, "C:/Users/samsi/OneDrive - University of Pittsburgh/df.feather")
-#Light theme 
 
-# non log space
+#Light theme ; non-log space
+
 ggplot(output , aes(x = (Actual), y = (Predicted))) + 
   geom_point(colour = 'black', alpha = 0.7) +
   xlim(0, 200) +
@@ -324,7 +328,7 @@ on.exit(stopCluster(cl))
 ffsResults <- ffs$perf_all
 
 # Save the results
-write_feather(ffsResults, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/new_coefsffs_results__AOI_filter_outlier_raw_95_percentile.feather")
+write_feather(ffsResults, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_ffs_results.feather")
 #
 ffsResults %>%
   group_by(nvar) %>%
@@ -338,7 +342,7 @@ ffsResults %>%
 
 # Hyperparamter tuning 
 ```{r}
-#Sometimes I have to run this unregister doparallel function, because I get an error about an invalid connection due to a lingering parallel operation
+#Sometimes the following function may be necessary due to a lingering parallel operation
 
 #unregister_dopar <- function() {
 #    env <- foreach:::.foreachGlobals
@@ -418,7 +422,7 @@ final_model <- caret::train(
 
 final_model$bestTune
 
-saveRDS(final_model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_algal_mask_95th_percentile.rDS")
+saveRDS(final_model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/CHOIR_final_model.rDS")
 
 ```
 
@@ -426,7 +430,7 @@ saveRDS(final_model, file = "C:/Users/samsi/OneDrive - University of Pittsburgh/
 ```{r eval}
 # load final model 
 
-final_model <- readRDS("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/final_model_algal_mask_95th_percentile.rDS")
+final_model <- readRDS("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Models/CHOIR_final_model.rDS")
 
 # evaulate the model
 pred<- predict(final_model, validate[,ffs_features])
@@ -458,23 +462,28 @@ print(evals)
 # Final model plots
 ```{r}
 
-# log space
+# Plot in log space
+
 ggplot(output , aes(x = log(Actual), y = log(Predicted))) + 
   geom_point(colour = 'black', alpha = 0.7) +
   geom_abline(slope=1, intercept = 0, color = 'black')+
+  ylim(-2, 6) + 
+  xlim(-2, 6) +
   xlab("Measured  (ug/L)") +
   ylab("Predicted (ug/L)")+
-  labs(title = 'Base Model')+
+ # labs(title = 'Base Model')+
   stat_poly_eq(colour = 'black') +
-  theme_few() +
+  theme_bw() +
     theme(axis.text = element_text(colour = 'black', size = 20), axis.title = element_text(size = 20, colour = 'black'),plot.title = element_text(size = 30, colour = 'black'),
             panel.grid.major = element_blank(),
             panel.grid.minor = element_blank(), 
-            panel.border = element_blank(),
             legend.background = element_rect(fill = '#292b30'), 
             legend.title = element_text(colour = 'white'))
 
-# non log space
+ggsave("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Plots/final_model_plot.jpeg", width=8, height =6, units="in", dpi=330)
+
+#Light theme ; non-log space
+
 ggplot(output , aes(x = (Actual), y = (Predicted))) + 
   geom_point(colour = 'black', alpha = 0.7) +
   xlim(0, 200) +
@@ -535,9 +544,9 @@ ylab("Predictor") +
 
 # Use final model to predict chlorophyll-a on RiverSR dataset 
 ```{r}
-# read riverSR in ORB
+# read in riverSR and predict  
 
-riverSR <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/algal_mask/orb_algal_mask.feather")
+riverSR <- read_feather("C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/algal_mask/IL_algal_mask_pred.feather")
 
 riverSR$pred <- predict(final_model, riverSR[,ffs_features])
 
@@ -545,5 +554,5 @@ riverSR$pred <- predict(final_model, riverSR[,ffs_features])
 riverSR <- riverSR %>% 
 mutate(pred = exp(pred))
 
-#write_feather(riverSR, "/Users/samsillen/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/orb_algal_mask_pred.feather")
+write_feather(riverSR, "C:/Users/samsi/OneDrive - University of Pittsburgh/OhioRiver_SR/Data/RiverSR_IL_pred.feather")
 ```
