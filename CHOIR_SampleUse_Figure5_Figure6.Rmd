@@ -1,0 +1,100 @@
+---
+title: "CHOIR_SampleUse_Figure5_Figure6"
+author: "Gabriella Zuccolotto"
+date: "2026-08-21"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(readr)
+library(sf)
+library(viridis)
+library(ggplot2)
+library(lubridate)
+library(trend)
+```
+
+``` {r load data}
+
+# Load files directly downloadable from EDI repo. EDI: https://doi.org/10.6073/pasta/fb1e48b0f1ed10857f5ffd842929274d. 
+data <- read_csv("D:/Dropbox/projects/OhioRiver_SR-main//CHOIR_RiverSR_pred.csv")
+centerlines <- read_sf("D:/Dropbox/projects/OhioRiver_SR-main/NHD_Centerlines/NHD_Centerlines.shp")
+
+```
+
+# Figure 5: Count of Observations and Mean Chlorophyll Concentration
+```{r fig 5}
+
+# Calculate reach mean concentration and count of observations
+data_groupCOMID <- data %>% 
+  dplyr::group_by(COMID)%>% 
+  dplyr::summarize(count=n(),
+            mean = mean(pred))
+
+# Join centerlines to dataframe
+data_groupCOMID <- merge(data_groupCOMID, centerlines, by="COMID", all.x=TRUE)
+data_groupCOMID <- st_as_sf(data_groupCOMID)
+
+# Create plots
+count_plot <- ggplot()+
+  geom_sf(data_groupCOMID, mapping=aes(col=count), linewidth=1.5)+
+  labs(col="Number of Observations")+
+  scale_color_viridis(option="A")+
+  theme_classic()+
+  theme(legend.position="bottom")
+count_plot
+
+mean_plot <- ggplot()+
+  geom_sf(data_groupCOMID, mapping=aes(col=mean), linewidth=1.5)+
+  labs(col="Chlorophyll- a mean (ug/L)")+
+  scale_color_viridis()+
+  theme_classic()+
+  theme(legend.position="bottom")
+mean_plot
+```
+
+# Figure 6: Time Series Plot Sample
+```{r fig 6}
+data$year <- format(as.Date(data$date, format="%Y-%m-%d"),"%Y")
+data$year <- as.numeric(data$year)
+data <- data %>% filter(year>1984)
+
+# To demonstrate a sample of increasing trends select COMIDs 10357898/3370264/19453135 in the Ohio River
+OhioRiver1_annualmean <- data%>%
+  dplyr::filter(COMID==10357898)%>%
+  dplyr::group_by(year)%>%
+  dplyr::summarize(mean=mean(pred))
+
+OhioRiver2_annualmean <- data %>%
+  dplyr::filter(COMID==3370264)%>%
+  dplyr::group_by(year)%>%
+  dplyr::summarize(mean=mean(pred))
+
+OhioRiver3_annualmean <- data %>%
+  dplyr::filter(COMID==19453135)%>%
+  dplyr::group_by(year)%>%
+  dplyr::summarize(mean=mean(pred))
+
+OhioRiver_annual <- ggplot()+
+  geom_line(OhioRiver1_annualmean, mapping=aes(x=year, y=mean), col='lightgrey', alpha=0.8, linewidth=1)+
+  geom_line(OhioRiver2_annualmean, mapping=aes(x=year, y=mean), col='#515151', alpha=0.8, linewidth=1)+
+  geom_line(OhioRiver3_annualmean, mapping=aes(x=year, y=mean), col='black', alpha=0.8, linewidth=1)+
+  xlab("Year")+
+  ylab("Chl-a Conc. (ug/L)")+
+  labs(title="Ohio River")+
+  theme_classic()+
+  theme(axis.text=element_text(size=14))
+OhioRiver_annual
+
+OhioRiver1_slope_annual <- sens.slope(OhioRiver1_annualmean$mean)$estimates
+OhioRiver2_slope_annual <- sens.slope(OhioRiver2_annualmean$mean)$estimates
+OhioRiver3_slope_annual <- sens.slope(OhioRiver3_annualmean$mean)$estimates
+
+OhioRiver_meanslope <- mean(c(OhioRiver1_slope_annual, OhioRiver2_slope_annual, OhioRiver3_slope_annual))
+```
+
+
